@@ -298,15 +298,31 @@ func (c *Cargo) Inventory(ctx context.Context, t ecosystem.Target) ([]ecosystem.
 	}
 	locked := cargoLocked(filepath.Join(filepath.Dir(t.Manifest), "Cargo.lock"))
 
+	// Only dependency tables hold dependencies: [package] also has `name` and
+	// `version` keys, and reading them as crates invents phantom dependencies.
 	var deps []ecosystem.Dependency
 	seen := map[string]bool{}
-	for _, m := range cargoDepRE.FindAllStringSubmatch(string(data), -1) {
+	inDeps := false
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") {
+			section := strings.Trim(trimmed, "[]")
+			inDeps = strings.Contains(section, "dependencies")
+			continue
+		}
+		if !inDeps {
+			continue
+		}
+		m := cargoDepRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
 		name := m[1]
 		constraint := m[2]
 		if constraint == "" {
 			constraint = m[3]
 		}
-		if seen[name] || name == "version" || name == "edition" {
+		if seen[name] {
 			continue
 		}
 		seen[name] = true

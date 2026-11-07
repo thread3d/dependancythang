@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions track the
 milestones in [the specification](specs/Local%20Dependency%20Updater%20MCP%20Server%20(Go)%20%E2%80%94%20Specification.md).
 
+## [0.9.1] — 2026-11-07
+
+Two bugs the first live run of the v2 ecosystems exposed.
+
+### Fixed
+- **crates.io returned nothing.** The registry rejects clients without a
+  `User-Agent`, so every Cargo lookup failed silently as "no candidate". The
+  shared HTTP cache now identifies itself on every request, which also satisfies
+  GitHub's preference.
+- **A phantom `name` dependency appeared in Cargo projects.** The dependency
+  regex matched `[package]`'s own `name` and `version` keys. Parsing is now
+  scoped to dependency tables, so a crate's identity is never mistaken for one of
+  its dependencies.
+
+### Verified
+Live: `requests 2.25.0 → 2.34.2` (minor, PyPI), `serde 1.0.180 → 1.0.229` (patch,
+crates.io), and `flask` correctly reporting no current version for a range
+constraint. Inventory on the same repository now lists exactly its three real
+dependencies.
+
 ## [Unreleased]
 
 ### Planned

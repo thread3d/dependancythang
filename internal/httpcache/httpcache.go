@@ -88,6 +88,10 @@ func (c *Cache) Fresh(e Entry) bool {
 	return time.Since(t) < c.ttl
 }
 
+// UserAgent identifies depmcp to registries. crates.io rejects requests without
+// one outright, and GitHub's API prefers it.
+const UserAgent = "depmcp (+https://github.com/thread3d/dependancythang)"
+
 // Client performs cached GET and POST requests.
 type Client struct {
 	HTTP    *http.Client
@@ -134,6 +138,7 @@ func (c *Client) Get(ctx context.Context, url string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	req.Header.Set("User-Agent", UserAgent)
 	if have && cached.ETag != "" {
 		req.Header.Set("If-None-Match", cached.ETag)
 	}
@@ -175,6 +180,7 @@ func (c *Client) Post(ctx context.Context, url string, payload []byte) (string, 
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", UserAgent)
 	body, etag, _, err := c.do(req)
 	if err != nil {
 		if have {
