@@ -37,6 +37,7 @@ Usage:
   depmcp plan <repo>         Build an update plan (JSON)
   depmcp apply <plan-id> --confirm
                              Apply a plan on a new branch (worktree)
+  depmcp verify <run-id>     Build and test a run's branch in the sandbox
   depmcp revert <run-id>     Delete a run's branch and worktree
   depmcp runs [repo]         Recent apply runs
   depmcp doctor              Check the environment
@@ -77,6 +78,8 @@ func main() {
 		err = runPlan(ctx, os.Args[2:])
 	case "apply":
 		err = runApply(ctx, os.Args[2:])
+	case "verify":
+		err = runVerify(ctx, os.Args[2:])
 	case "revert":
 		err = runRevert(ctx, os.Args[2:])
 	case "runs":
@@ -399,6 +402,21 @@ func runApply(ctx context.Context, args []string) error {
 		return err
 	}
 	return emitJSON(run)
+}
+
+func runVerify(ctx context.Context, args []string) error {
+	return withRepo(ctx, args, "verify", func(svc *app.Service, runID string) error {
+		run, result, err := svc.VerifyRun(ctx, runID)
+		if err != nil {
+			// Report the result even when verification failed: the failure is
+			// the useful output, not an error to swallow.
+			if result.Summary != "" {
+				_ = emitJSON(map[string]any{"run": run, "result": result})
+			}
+			return err
+		}
+		return emitJSON(map[string]any{"run": run, "result": result})
+	})
 }
 
 func runRevert(ctx context.Context, args []string) error {

@@ -168,6 +168,16 @@ func (*Ecosystem) Classify(from, to string) ecosystem.UpdateClass {
 	}
 }
 
+// VerifyCommands returns the default build and test commands for a Go module.
+// `go vet` is deliberately absent: it is useful but noisy on existing code, and
+// a failing verify should mean the update broke something.
+func (*Ecosystem) VerifyCommands(ecosystem.Target) [][]string {
+	return [][]string{
+		{"go", "build", "./..."},
+		{"go", "test", "./..."},
+	}
+}
+
 // IsPrerelease reports whether v is a pre-release of its series, so policy can
 // skip pre-releases unless the current version already is one (§6).
 func IsPrerelease(v string) bool { return semver.Prerelease(v) != "" }

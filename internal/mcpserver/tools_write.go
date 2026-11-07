@@ -10,6 +10,7 @@ import (
 	"github.com/thread3d/dependancythang/internal/app"
 	"github.com/thread3d/dependancythang/internal/planner"
 	"github.com/thread3d/dependancythang/internal/store"
+	"github.com/thread3d/dependancythang/internal/verify"
 )
 
 // registerWriteTools adds the M2 write path: apply a plan, revert a run, and
@@ -48,6 +49,29 @@ func registerWriteTools(s *mcp.Server, svc *app.Service) {
 		_ = svc.RecordTool(ctx, "apply_plan",
 			map[string]any{"plan_id": in.PlanID, "run_id": run.RunID, "branch": run.Branch}, nil, "")
 		return nil, runOut{Run: run}, nil
+	})
+
+	type verifyIn struct {
+		RunID string `json:"run_id" jsonschema:"run id returned by apply_plan"`
+	}
+	type verifyOut struct {
+		Run    store.Run     `json:"run"`
+		Result verify.Result `json:"result"`
+	}
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "verify_run",
+		Description: "Build and test a run's branch inside the sandbox, with no network and no credentials. " +
+			"A failing verification is what blocks a bad update.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: ptr(true), IdempotentHint: false, OpenWorldHint: ptr(false)},
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in verifyIn) (*mcp.CallToolResult, verifyOut, error) {
+		run, result, err := svc.VerifyRun(ctx, in.RunID)
+		if err != nil {
+			return nil, verifyOut{Run: run, Result: result}, wrap(svc, "verify_run",
+				map[string]any{"run_id": in.RunID}, err)
+		}
+		_ = svc.RecordTool(ctx, "verify_run",
+			map[string]any{"run_id": in.RunID, "summary": result.Summary}, nil, "")
+		return nil, verifyOut{Run: run, Result: result}, nil
 	})
 
 	type revertIn struct {

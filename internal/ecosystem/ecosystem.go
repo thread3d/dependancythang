@@ -71,6 +71,8 @@ type Ecosystem interface {
 	Compare(a, b string) int
 	// Classify reports the semver distance between two versions.
 	Classify(from, to string) UpdateClass
+	// VerifyCommands returns the build and test commands Phase B should run.
+	VerifyCommands(t Target) [][]string
 }
 
 // Registry returns published versions for a module path. It is separate from

@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -68,6 +67,8 @@ func CodeOf(err error) string {
 type Service struct {
 	Registry ecosystem.Registry
 	Apply    func(context.Context, string, []gomod.Change) (gomod.ApplyResult, error)
+	// Sandbox is a seam for verification tests; nil means "resolve from config".
+	Sandbox SandboxFactory
 
 	ConfigPath string
 	Cfg        *config.Config
@@ -416,15 +417,10 @@ func (s *Service) Doctor(ctx context.Context) []Check {
 		add("git", "ok", strings.TrimSpace(string(out)))
 	}
 
-	switch runtime.GOOS {
-	case "linux":
-		if _, err := exec.LookPath("bwrap"); err != nil {
-			add("sandbox", "warn", "bwrap not found; verify will fail with SANDBOX_UNAVAILABLE unless a container runtime is configured")
-		} else {
-			add("sandbox", "ok", "bubblewrap available (Phase B)")
-		}
-	default:
-		add("sandbox", "warn", "no bubblewrap on this platform; container runtime required for verify")
+	if name, problem := s.VerifyArtifacts(ctx); problem != nil {
+		add("sandbox", "warn", fmt.Sprintf("%s: %v (verify will refuse with SANDBOX_UNAVAILABLE)", name, problem))
+	} else {
+		add("sandbox", "ok", fmt.Sprintf("%s can start a sandbox (Phase B)", name))
 	}
 
 	for _, cli := range []string{"go", "npm", "pnpm"} {

@@ -21,7 +21,7 @@ import (
 
 // SchemaVersion is the newest migration this binary knows. A database stamped
 // with a higher number refuses to open, rather than being silently downgraded.
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // migrations are applied in order; index 0 brings a fresh database to version 1.
 // They are forward-only by design.
@@ -105,6 +105,15 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 CREATE INDEX IF NOT EXISTS runs_repo ON runs(repo_id, created_at);
 CREATE INDEX IF NOT EXISTS runs_status ON runs(status);
+`,
+
+	// Migration 4: verification. A run records whether its branch was proven to
+	// build and pass tests before anything is proposed.
+	`
+ALTER TABLE runs ADD COLUMN verify_status TEXT NOT NULL DEFAULT '';
+ALTER TABLE runs ADD COLUMN verify_summary TEXT NOT NULL DEFAULT '';
+ALTER TABLE runs ADD COLUMN verify_sandbox TEXT NOT NULL DEFAULT '';
+ALTER TABLE runs ADD COLUMN verified_at INTEGER NOT NULL DEFAULT 0;
 `,
 }
 

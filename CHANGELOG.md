@@ -7,8 +7,45 @@ milestones in [the specification](specs/Local%20Dependency%20Updater%20MCP%20Ser
 ## [Unreleased]
 
 ### Planned
-- M3: sandboxed verification — run the project's build and tests in a
-  bubblewrap sandbox before a branch is offered, plus `verify_run`.
+- M4: npm/pnpm, Docker, and GitHub Actions ecosystems behind the same interface.
+
+## [0.4.0] — 2026-11-07
+
+The M3 verify stage: an update is now proven before anything is proposed.
+
+### Added
+- **Sandboxed verification** (`verify_run`, `depmcp verify`). The branch is built
+  and tested inside bubblewrap with no network, a stripped environment, an empty
+  home, a read-only root, and exactly one writable directory — the worktree.
+- **The Phase B credential boundary is real.** The module cache is mounted
+  read-only; a shared writable build cache is deliberately not used, because
+  cross-run cache poisoning is a supply-chain path. Each verification gets a
+  fresh tmpfs build cache and pays for it in compile time.
+- **`SANDBOX_UNAVAILABLE` instead of unconfined execution.** No sandbox means no
+  verification, unless `verify.sandbox: none` is configured explicitly — and then
+  every result is marked `unconfined`.
+- **A failing verify blocks the run**: status `failed`, `VERIFY_FAILED` or
+  `VERIFY_TIMEOUT`, first failing command captured with bounded output, and the
+  branch left in place for inspection rather than offered.
+- `depmcp doctor` now reports whether the configured sandbox can actually start a
+  namespace, not merely whether the binary exists.
+- Schema migration 4 records `verify_status`, `verify_summary`, `verify_sandbox`,
+  and `verified_at` on each run.
+
+### Fixed
+- The sandbox mounted its private `/tmp` after the worktree bind, so any worktree
+  under `/tmp` was replaced by an empty directory.
+- `/etc/alternatives` was not bound, so `/usr/bin/go` — a symlink through the
+  alternatives system — dangled inside the sandbox and every command failed with
+  `execvp go: No such file or directory`.
+
+### Known limitations
+- Only the Go ecosystem supplies verify commands; nothing else can be verified
+  yet.
+- Container sandboxing (`verify.sandbox: container`) is declared in the
+  specification but reports `SANDBOX_UNAVAILABLE` — bubblewrap or nothing.
+- `govulncheck` reachability is not yet run inside the sandbox.
+- Bisect-by-revert is not automatic: a failing group is reported, not subdivided.
 
 ## [0.3.0] — 2026-11-07
 

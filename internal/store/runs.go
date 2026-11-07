@@ -25,17 +25,22 @@ const (
 
 // Run is one attempt to apply a plan. Every run is a branch (§3 row 13).
 type Run struct {
-	RunID     string `json:"run_id"`
-	RepoID    string `json:"repo_id"`
-	PlanID    string `json:"plan_id"`
-	Target    string `json:"target,omitempty"`
-	Branch    string `json:"branch"`
-	Worktree  string `json:"worktree"`
-	Status    string `json:"status"`
-	Commit    string `json:"commit,omitempty"`
-	Detail    string `json:"detail,omitempty"`
-	CreatedAt int64  `json:"created_at"`
-	UpdatedAt int64  `json:"updated_at"`
+	RunID    string `json:"run_id"`
+	RepoID   string `json:"repo_id"`
+	PlanID   string `json:"plan_id"`
+	Target   string `json:"target,omitempty"`
+	Branch   string `json:"branch"`
+	Worktree string `json:"worktree"`
+	Status   string `json:"status"`
+	Commit   string `json:"commit,omitempty"`
+	Detail   string `json:"detail,omitempty"`
+	// Verification outcome, empty until the branch has been built and tested.
+	VerifyStatus  string `json:"verify_status,omitempty"`
+	VerifySummary string `json:"verify_summary,omitempty"`
+	VerifySandbox string `json:"verify_sandbox,omitempty"`
+	VerifiedAt    int64  `json:"verified_at,omitempty"`
+	CreatedAt     int64  `json:"created_at"`
+	UpdatedAt     int64  `json:"updated_at"`
 }
 
 // Terminal reports whether a status is final. Reverting a merged or closed run
@@ -71,13 +76,18 @@ func (s *Store) SaveRun(ctx context.Context, run Run) error {
 	}
 	run.UpdatedAt = now
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO runs(run_id, repo_id, plan_id, target, branch, worktree, status, commit_sha, detail, created_at, updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)
+		INSERT INTO runs(run_id, repo_id, plan_id, target, branch, worktree, status, commit_sha, detail,
+		                 verify_status, verify_summary, verify_sandbox, verified_at, created_at, updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(run_id) DO UPDATE SET
 			status=excluded.status, commit_sha=excluded.commit_sha, detail=excluded.detail,
+			verify_status=excluded.verify_status, verify_summary=excluded.verify_summary,
+			verify_sandbox=excluded.verify_sandbox, verified_at=excluded.verified_at,
 			updated_at=excluded.updated_at`,
 		run.RunID, run.RepoID, run.PlanID, run.Target, run.Branch, run.Worktree,
-		run.Status, run.Commit, run.Detail, run.CreatedAt, run.UpdatedAt)
+		run.Status, run.Commit, run.Detail,
+		run.VerifyStatus, run.VerifySummary, run.VerifySandbox, run.VerifiedAt,
+		run.CreatedAt, run.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("save run %s: %w", run.RunID, err)
 	}
@@ -90,10 +100,12 @@ func (s *Store) LoadRun(ctx context.Context, runID string) (Run, error) {
 	var commit, detail, target sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT run_id, repo_id, plan_id, target, branch, worktree, status,
-		       commit_sha, detail, created_at, updated_at
+		       commit_sha, detail, verify_status, verify_summary, verify_sandbox, verified_at,
+		       created_at, updated_at
 		FROM runs WHERE run_id=?`, runID).
 		Scan(&r.RunID, &r.RepoID, &r.PlanID, &target, &r.Branch, &r.Worktree,
-			&r.Status, &commit, &detail, &r.CreatedAt, &r.UpdatedAt)
+			&r.Status, &commit, &detail, &r.VerifyStatus, &r.VerifySummary, &r.VerifySandbox,
+			&r.VerifiedAt, &r.CreatedAt, &r.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNoRun
 	}
@@ -110,7 +122,8 @@ func (s *Store) ListRuns(ctx context.Context, repoID string, limit int) ([]Run, 
 		limit = 20
 	}
 	query := `SELECT run_id, repo_id, plan_id, target, branch, worktree, status,
-	                 commit_sha, detail, created_at, updated_at FROM runs`
+	                 commit_sha, detail, verify_status, verify_summary, verify_sandbox, verified_at,
+	                 created_at, updated_at FROM runs`
 	args := []any{}
 	if repoID != "" {
 		query += ` WHERE repo_id=?`
@@ -130,7 +143,8 @@ func (s *Store) ListRuns(ctx context.Context, repoID string, limit int) ([]Run, 
 		var r Run
 		var commit, detail, target sql.NullString
 		if err := rows.Scan(&r.RunID, &r.RepoID, &r.PlanID, &target, &r.Branch, &r.Worktree,
-			&r.Status, &commit, &detail, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			&r.Status, &commit, &detail, &r.VerifyStatus, &r.VerifySummary, &r.VerifySandbox,
+			&r.VerifiedAt, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan run: %w", err)
 		}
 		r.Target, r.Commit, r.Detail = target.String, commit.String, detail.String
