@@ -5,21 +5,26 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
+
+	"golang.org/x/term"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/thread3d/dependancythang/internal/app"
 	"github.com/thread3d/dependancythang/internal/config"
 	"github.com/thread3d/dependancythang/internal/mcpserver"
 	"github.com/thread3d/dependancythang/internal/schedule"
+	"github.com/thread3d/dependancythang/internal/secrets"
 	"github.com/thread3d/dependancythang/internal/store"
 	"github.com/thread3d/dependancythang/internal/version"
 )
@@ -50,6 +55,9 @@ Usage:
   depmcp pr <run-id>         Publish a verified branch and open a pull request
   depmcp import-dependabot <repo>
                              Report how .github/dependabot.yml maps onto depmcp
+  depmcp secret set <forge>  Store a forge token in the OS keyring (reads stdin)
+  depmcp secret delete <forge>
+  depmcp secret check        Report whether the keyring is usable
   depmcp doctor              Check the environment
   depmcp status              Show state directory and database statistics
   depmcp validate [file]     Validate a configuration file (default: the global one)
@@ -104,6 +112,8 @@ func main() {
 		err = runPR(ctx, os.Args[2:])
 	case "import-dependabot":
 		err = runImportDependabot(ctx, os.Args[2:])
+	case "secret":
+		err = runSecret(ctx, os.Args[2:])
 	case "doctor":
 		err = runDoctor(ctx)
 	case "status":
@@ -592,6 +602,83 @@ func runImportDependabot(ctx context.Context, args []string) error {
 		}
 		return emitJSON(res)
 	})
+}
+
+// runSecret manages forge credentials. Tokens are read from stdin, never from
+// argv, so they do not land in shell history or a process listing.
+func runSecret(ctx context.Context, args []string) error {
+	if len(args) == 0 {
+		return errors.New("secret requires a subcommand: set, delete, or check")
+	}
+	sub := args[0]
+	svc, err := app.Open(ctx)
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+
+	switch sub {
+	case "check":
+		if err := svc.Secrets.Available(); err != nil {
+			return fmt.Errorf("%w (use DEPMCP_<FORGE>_TOKEN instead)", err)
+		}
+		return emitJSON(map[string]any{"backend": svc.Secrets.Backend.Name(), "available": true})
+
+	case "set":
+		if len(args) != 2 {
+			return errors.New("secret set requires a forge name")
+		}
+		forgeName := args[1]
+		fmt.Fprintf(os.Stderr, "Paste the %s token (input is not echoed): ", forgeName)
+		token, err := readSecret(os.Stdin)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(token) == "" {
+			return errors.New("no token read from stdin")
+		}
+		if err := svc.Secrets.Set(forgeName, token); err != nil {
+			return err
+		}
+		return emitJSON(map[string]any{"forge": forgeName, "stored": true, "key": secrets.Key(forgeName)})
+
+	case "delete":
+		if len(args) != 2 {
+			return errors.New("secret delete requires a forge name")
+		}
+		if err := svc.Secrets.Delete(args[1]); err != nil {
+			return err
+		}
+		return emitJSON(map[string]any{"forge": args[1], "deleted": true})
+
+	default:
+		return fmt.Errorf("unknown secret subcommand %q", sub)
+	}
+}
+
+// readSecret reads one line from stdin with echo disabled when stdin is a
+// terminal; a pipe is read as-is so automation can work.
+func readSecret(r *os.File) (string, error) {
+	if term.IsTerminal(int(r.Fd())) {
+		// Disabling echo portably needs x/term; on Linux stty is universally
+		// present, so use it rather than adding a dependency for one call.
+		restore := exec.Command("stty", "-echo")
+		restore.Stdin = r
+		if err := restore.Run(); err == nil {
+			defer func() {
+				show := exec.Command("stty", "echo")
+				show.Stdin = r
+				_ = show.Run()
+				fmt.Fprintln(os.Stderr)
+			}()
+		}
+	}
+	reader := bufio.NewReader(r)
+	line, err := reader.ReadString('\n')
+	if err != nil && line == "" {
+		return "", err
+	}
+	return strings.TrimRight(line, "\r\n"), nil
 }
 
 func emitJSON(v any) error {

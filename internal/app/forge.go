@@ -59,23 +59,51 @@ func (s *Service) forgeFor(repoPath, name, remoteName string) (forge.Forge, erro
 	switch strings.ToLower(name) {
 	case "github":
 		return &forge.GitHub{
-			Remote: forge.Remote{Base: base, Token: os.Getenv("DEPMCP_GITHUB_TOKEN")},
+			Remote: forge.Remote{Base: base, Token: s.tokenFor("github")},
 			Owner:  owner, Repo: repo,
 		}, nil
 	case "gitlab":
 		return &forge.GitLab{
-			Remote:  forge.Remote{Base: base, Token: os.Getenv("DEPMCP_GITLAB_TOKEN")},
+			Remote:  forge.Remote{Base: base, Token: s.tokenFor("gitlab")},
 			Project: owner + "/" + repo,
 		}, nil
 	case "gitea", "forgejo":
 		return &forge.Gitea{
-			Remote: forge.Remote{Base: base, Token: os.Getenv("DEPMCP_GITEA_TOKEN")},
+			Remote: forge.Remote{Base: base, Token: s.tokenFor("gitea")},
 			Owner:  owner, Repo: repo,
 		}, nil
 	default:
 		return nil, coded(CodeForgeNotConfigured, fmt.Errorf("unknown forge %q", name))
 	}
 }
+
+// tokenFor resolves a forge token: the environment first, then the OS keyring.
+//
+// The environment stays supported for CI and containers without a session bus,
+// but the keyring is the ordinary path, and nothing is ever written to a file.
+func (s *Service) tokenFor(forgeName string) string {
+	env := map[string]string{
+		"github": "DEPMCP_GITHUB_TOKEN",
+		"gitlab": "DEPMCP_GITLAB_TOKEN",
+		"gitea":  "DEPMCP_GITEA_TOKEN",
+	}
+	if name := env[forgeName]; name != "" {
+		if token := strings.TrimSpace(os.Getenv(name)); token != "" {
+			return token
+		}
+	}
+	token, err := s.Secrets.Get(forgeName)
+	if err != nil {
+		// A missing token is not an error yet: the local forge needs none, and a
+		// remote call without one will fail at the API with a clear status.
+		return ""
+	}
+	return token
+}
+
+// TokenForTest exposes token resolution to tests in this package's external test
+// package without widening the production API.
+func (s *Service) TokenForTest(forgeName string) string { return s.tokenFor(forgeName) }
 
 // remoteURL reads a repository's remote URL without touching the network.
 func (s *Service) remoteURL(repoPath, remoteName string) string {

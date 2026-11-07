@@ -11,6 +11,7 @@ import (
 	"github.com/thread3d/dependancythang/internal/app"
 	"github.com/thread3d/dependancythang/internal/ecosystem"
 	"github.com/thread3d/dependancythang/internal/sandbox"
+	"github.com/thread3d/dependancythang/internal/secrets"
 	"github.com/thread3d/dependancythang/internal/store"
 )
 
@@ -70,6 +71,37 @@ func TestOpenPullRequestLocalForgeWritesReport(t *testing.T) {
 	}
 	if res.Run.Status != store.StatusPROpened {
 		t.Errorf("run status = %q, want %q", res.Run.Status, store.StatusPROpened)
+	}
+}
+
+// TestTokenResolutionPrecedence is the §11 rule: the keyring is the ordinary
+// path, the environment is the escape hatch, and a stored token wins only when
+// the environment is silent.
+func TestTokenResolutionPrecedence(t *testing.T) {
+	svc, _, _ := verifiedRun(t)
+	backend := secrets.NewMemory()
+	svc.Secrets = secrets.Store{Backend: backend}
+
+	if got := svc.TokenForTest("github"); got != "" {
+		t.Errorf("token with nothing configured = %q, want empty", got)
+	}
+
+	if err := backend.Set("github:token", "from-keyring"); err != nil {
+		t.Fatalf("seed keyring: %v", err)
+	}
+	if got := svc.TokenForTest("github"); got != "from-keyring" {
+		t.Errorf("token = %q, want the keyring value", got)
+	}
+
+	t.Setenv("DEPMCP_GITHUB_TOKEN", "from-env")
+	if got := svc.TokenForTest("github"); got != "from-env" {
+		t.Errorf("token = %q, want the environment to win", got)
+	}
+
+	// A broken keyring must not panic; it degrades to "no token".
+	svc.Secrets = secrets.Store{Backend: &secrets.Memory{Fail: true}}
+	if got := svc.TokenForTest("github"); got != "from-env" {
+		t.Errorf("token with a failing keyring = %q, want the environment value", got)
 	}
 }
 

@@ -7,7 +7,35 @@ milestones in [the specification](specs/Local%20Dependency%20Updater%20MCP%20Ser
 ## [Unreleased]
 
 ### Planned
-- M7: v2 breadth — pip/uv/poetry, Cargo, and yarn v1/berry ecosystems.
+- M7: v2 breadth — pip/uv/poetry, Cargo, and yarn.
+
+## [0.8.0] — 2026-11-07
+
+Closes the gap between the design and the code: forge tokens now live in the OS
+keyring.
+
+### Added
+- **`internal/secrets`**: a keyring store with an explicit `Backend` interface
+  (OS keyring in production, in-memory in tests). Entries are namespaced
+  `depmcp` / `<forge>:token`, so a user can see which token is which.
+- **Token resolution order is environment, then keyring.** The environment stays
+  supported for CI and containers without a session bus; the keyring is the
+  ordinary path. Nothing is ever written to configuration, the state database, or
+  a log.
+- **`depmcp secret set|delete|check`.** Tokens are read from stdin, never argv, so
+  they do not land in shell history or a process listing, and echo is disabled on
+  a terminal.
+- **`doctor` probes the keyring by round trip** — a session bus can exist while
+  the collection is locked or absent, and the old check only looked for the
+  variable.
+
+### Changed
+- `Service` owns a `secrets.Store`, so the keyring is a seam that tests can
+  replace rather than a global.
+
+### Known limitations
+- There is no plaintext fallback by design: on a machine with no keyring the
+  environment variable is the only route, and `doctor` says so.
 
 ## [0.7.0] — 2026-11-07
 

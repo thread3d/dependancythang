@@ -5,7 +5,7 @@ Dependabot's workflow, with no hosted service. It finds outdated and vulnerable
 dependencies in local repositories, turns them into reviewed update branches, and
 runs the project's build and tests before proposing anything.
 
-**Status: v0.7.0 — M6 forges.** depmcp inventories a repository's
+**Status: v0.8.0 — keyring + M6 forges.** depmcp inventories a repository's
 dependencies across **Go modules, npm, pnpm, Docker, and GitHub Actions**, finds
 newer versions and known vulnerabilities, builds a policy-filtered plan, applies
 it on a new git branch, and proves the result by building and testing it inside a
@@ -71,8 +71,16 @@ Tools (20): `list_repositories`, `add_repository`, `update_repository`,
 Prompts (4): `triage_vulnerabilities`, `review_updates`,
 `explain_breaking_change`, `weekly_digest`.
 
-Forge tokens are read from `DEPMCP_GITHUB_TOKEN`, `DEPMCP_GITLAB_TOKEN`, or
-`DEPMCP_GITEA_TOKEN`. Self-hosted instances set `DEPMCP_FORGE_BASE`.
+Forge tokens live in the OS keyring:
+
+```bash
+depmcp secret set github     # paste the token; it is never echoed or logged
+depmcp secret check          # is the keyring usable?
+```
+
+`DEPMCP_GITHUB_TOKEN`, `DEPMCP_GITLAB_TOKEN`, and `DEPMCP_GITEA_TOKEN` still work
+and take precedence, for CI and machines without a session bus. Self-hosted
+instances set `DEPMCP_FORGE_BASE`.
 
 `apply_plan` confirms through MCP elicitation when the client supports it and
 requires `confirm: true` otherwise; the summary it shows is computed from the
@@ -118,6 +126,7 @@ internal/schedule/   systemd/launchd/cron artifact generation
 internal/notify/     file, desktop, and ntfy notification channels
 internal/forge/      local, GitHub, GitLab, and Gitea publishing
 internal/dependabot/ .github/dependabot.yml import
+internal/secrets/    OS keyring store for forge tokens
 internal/httpcache/  shared on-disk HTTP cache with ETags
 spike/mcp-probe/   throwaway SDK capability probe from M-1
 specs/             the specification

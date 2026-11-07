@@ -19,6 +19,7 @@ import (
 	"github.com/thread3d/dependancythang/internal/ecosystem"
 	"github.com/thread3d/dependancythang/internal/notify"
 	"github.com/thread3d/dependancythang/internal/repolock"
+	"github.com/thread3d/dependancythang/internal/secrets"
 	"github.com/thread3d/dependancythang/internal/store"
 	"gopkg.in/yaml.v3"
 )
@@ -71,6 +72,8 @@ type Service struct {
 	Sandbox SandboxFactory
 	// Notifier is a seam for scheduled-run tests; nil means "build from config".
 	Notifier notify.Notifier
+	// Secrets resolves forge tokens; nil means the OS keyring.
+	Secrets secrets.Store
 
 	ConfigPath string
 	Cfg        *config.Config
@@ -110,6 +113,7 @@ func Open(ctx context.Context) (*Service, error) {
 	}
 
 	s := &Service{
+		Secrets:    secrets.Store{Backend: secrets.Keyring{}},
 		ConfigPath: src.GlobalPath,
 		Cfg:        cfg,
 		Sources:    src,
@@ -440,12 +444,12 @@ func (s *Service) Doctor(ctx context.Context) []Check {
 		add("signing", "ok", "no forced commit signing")
 	}
 
-	// Keyring is only needed from M6 (forge tokens); report the prerequisite
-	// rather than pretending to test it.
-	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") != "" {
-		add("keyring", "ok", "session bus present")
+	// The keyring is only really tested by a round trip: a session bus can exist
+	// while the collection is locked or missing.
+	if err := s.Secrets.Available(); err != nil {
+		add("keyring", "warn", fmt.Sprintf("%v; forge tokens must come from the environment instead", err))
 	} else {
-		add("keyring", "warn", "no DBUS session bus; OS keyring unavailable (needed for forge tokens in M6)")
+		add("keyring", "ok", "OS keyring accepts writes (forge tokens live here)")
 	}
 
 	return checks
