@@ -13,16 +13,17 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/thread3d/dependancythang/internal/app"
 	"github.com/thread3d/dependancythang/internal/config"
+	"github.com/thread3d/dependancythang/internal/version"
 )
 
-// Version is reported in the initialize handshake.
-const Version = "v0.1.0-m0"
+// ServerName is reported in the initialize handshake.
+const ServerName = "depmcp"
 
 // New builds the MCP server with every M0 tool registered.
 func New(svc *app.Service) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{
-		Name:    "depmcp",
-		Version: Version,
+		Name:    ServerName,
+		Version: version.Version,
 	}, nil)
 
 	registerRepositoryTools(s, svc)

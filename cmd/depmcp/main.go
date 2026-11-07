@@ -19,6 +19,8 @@ import (
 	"github.com/thread3d/dependancythang/internal/app"
 	"github.com/thread3d/dependancythang/internal/config"
 	"github.com/thread3d/dependancythang/internal/mcpserver"
+	"github.com/thread3d/dependancythang/internal/store"
+	"github.com/thread3d/dependancythang/internal/version"
 )
 
 const usage = `depmcp — local dependency updater over MCP
@@ -64,7 +66,7 @@ func main() {
 	case "validate":
 		err = runValidate(os.Args[2:])
 	case "version", "--version", "-v":
-		fmt.Printf("depmcp %s (schema %d)\n", mcpserver.Version, schemaVersion())
+		fmt.Printf("depmcp %s (schema %d)\n", version.String(), store.SchemaVersion)
 	case "help", "--help", "-h":
 		fmt.Print(usage)
 	default:
@@ -82,8 +84,6 @@ func main() {
 		os.Exit(1)
 	}
 }
-
-func schemaVersion() int { return 1 }
 
 func runServe(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
@@ -103,7 +103,7 @@ func runServe(ctx context.Context, args []string) error {
 
 	// stdout carries protocol frames only; every diagnostic goes to stderr.
 	fmt.Fprintf(os.Stderr, "depmcp %s serving MCP on stdio (state %s)\n",
-		mcpserver.Version, svc.StateDir())
+		version.String(), svc.StateDir())
 
 	server := mcpserver.New(svc)
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {

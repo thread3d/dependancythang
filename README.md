@@ -5,9 +5,11 @@ Dependabot's workflow, with no hosted service. It finds outdated and vulnerable
 dependencies in local repositories, turns them into reviewed update branches, and
 runs the project's build and tests before proposing anything.
 
-**Status: M0 (skeleton).** See [the specification](specs/Local%20Dependency%20Updater%20MCP%20Server%20(Go)%20%E2%80%94%20Specification.md)
-for the full design and the [M-1 spike findings](spike/mcp-probe/FINDINGS.md) for
-the verified SDK behaviour this is built on.
+**Status: v0.1.0 — M0 skeleton.** Configuration authority, derived state, and the
+MCP surface that reads and edits it. Planning, applying, and verifying updates are
+not implemented yet; see [CHANGELOG.md](CHANGELOG.md) for exactly what is in and
+out. Design: [the specification](specs/Local%20Dependency%20Updater%20MCP%20Server%20(Go)%20%E2%80%94%20Specification.md);
+verified SDK behaviour: [M-1 spike findings](spike/mcp-probe/FINDINGS.md).
 
 There is no daemon and no listening socket. `depmcp serve` speaks MCP on
 stdin/stdout; scheduling will be an external systemd timer invoking one-shot
@@ -20,7 +22,10 @@ Requires Go ≥ 1.25 and no C compiler (builds are `CGO_ENABLED=0`).
 ```bash
 go build ./...
 go test ./...
-go build -o ~/.local/bin/depmcp ./cmd/depmcp
+go build -ldflags "-X github.com/thread3d/dependancythang/internal/version.Commit=$(git rev-parse --short HEAD) \
+  -X github.com/thread3d/dependancythang/internal/version.Date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -o ~/.local/bin/depmcp ./cmd/depmcp
+depmcp version
 ```
 
 ## Use
@@ -61,6 +66,7 @@ write temp → fsync → rename, and detect concurrent hand-edits by hash.
 
 ```
 cmd/depmcp/        CLI: serve, add, remove, list, doctor, status, validate
+internal/version/  build identity, injected with -ldflags -X
 internal/app/      wiring, stable error codes, doctor
 internal/config/   layered load, strict decode, atomic Node-preserving edits
 internal/mcpserver MCP tool registration
