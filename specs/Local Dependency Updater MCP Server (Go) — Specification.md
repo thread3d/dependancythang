@@ -569,7 +569,9 @@ The tool runs other people's code on your machine and feeds other people's text 
 
 **Build requirements**
 
-- Official Go toolchain **≥ 1.23** (`log/slog` needs 1.21; the MCP SDK and current deps need more). A distro `gccgo` (e.g. 1.18) cannot build this and must not be used — verify with `go version` before M0, and pin `go` in `go.mod`.
+- Official Go toolchain **≥ 1.25** — the hard floor is the MCP SDK (`github.com/modelcontextprotocol/go-sdk` v1.8.0 declares `go 1.25.0`, verified); `log/slog` needs 1.21. Pin `go 1.25` or higher in `go.mod` and verify with `go version` before M0. A distro `gccgo` cannot build this and must not be used: on Fedora it can shadow the real toolchain through `/etc/alternatives/go`, which reports a years-old version while a current `golang-bin` sits unused at `/usr/lib/golang/bin/go`.
+- Builds are CGO-free (`CGO_ENABLED=0`), so no C compiler is required at build time and the release binary is statically linked.
+- Dev tooling may require a newer Go than the distro ships (GoReleaser v2.20 needs ≥ 1.27.3). Keep `GOTOOLCHAIN=local` for the project build so it stays pinned to the packaged toolchain, and use `GOTOOLCHAIN=auto` only for one-off `go install` of tools.
 - Linux: `git`, `bubblewrap`, and the ecosystem CLIs actually used (`go`, `npm`, `pnpm`, `podman`/`docker`).
 
 **Observability**
