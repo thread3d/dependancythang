@@ -31,6 +31,8 @@ func New(svc *app.Service) *mcp.Server {
 	registerStatusTool(s, svc)
 	registerReadTools(s, svc)
 	registerWriteTools(s, svc)
+	registerForgeTools(s, svc)
+	registerPrompts(s)
 	return s
 }
 

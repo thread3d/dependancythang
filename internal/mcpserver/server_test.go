@@ -79,6 +79,52 @@ func TestToolSurface(t *testing.T) {
 	}
 }
 
+// TestPromptsAreRegistered checks the four prompts from §7 are served, since a
+// prompt nobody can list is a prompt nobody will use.
+func TestPromptsAreRegistered(t *testing.T) {
+	ctx := context.Background()
+	_, _ = setup(t)
+	svc, err := app.Open(ctx)
+	if err != nil {
+		t.Fatalf("open service: %v", err)
+	}
+	defer svc.Close()
+	cs := connect(t, ctx, svc)
+
+	res, err := cs.ListPrompts(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListPrompts: %v", err)
+	}
+	got := map[string]bool{}
+	for _, p := range res.Prompts {
+		got[p.Name] = true
+	}
+	for _, want := range []string{
+		"triage_vulnerabilities", "review_updates",
+		"explain_breaking_change", "weekly_digest",
+	} {
+		if !got[want] {
+			t.Errorf("prompt %q is not registered", want)
+		}
+	}
+
+	// A prompt must render with its argument substituted.
+	pr, err := cs.GetPrompt(ctx, &mcp.GetPromptParams{
+		Name:      "review_updates",
+		Arguments: map[string]string{"repository": "/tmp/demo"},
+	})
+	if err != nil {
+		t.Fatalf("GetPrompt: %v", err)
+	}
+	if len(pr.Messages) == 0 {
+		t.Fatal("prompt returned no messages")
+	}
+	text := textOfPrompt(pr.Messages[0].Content)
+	if !strings.Contains(text, "/tmp/demo") {
+		t.Errorf("prompt did not substitute its argument:\n%s", text)
+	}
+}
+
 func TestAddThenListRepository(t *testing.T) {
 	ctx := context.Background()
 	configPath, repoPath := setup(t)
@@ -196,6 +242,14 @@ func TestStatusReportsStateDir(t *testing.T) {
 	if !strings.Contains(textOf(res), svc.StateDir()) {
 		t.Errorf("status output does not mention the state dir:\n%s", textOf(res))
 	}
+}
+
+// textOfPrompt renders a prompt content block.
+func textOfPrompt(c any) string {
+	if tc, ok := c.(*mcp.TextContent); ok {
+		return tc.Text
+	}
+	return ""
 }
 
 // textOf flattens a tool result to text: structured content when present,

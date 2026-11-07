@@ -47,6 +47,9 @@ Usage:
   depmcp schedule print --repo <repo> [--kind ...]
                              Print the artifact instead of writing it
   depmcp resume --repo <repo> Clear a repository's failure count
+  depmcp pr <run-id>         Publish a verified branch and open a pull request
+  depmcp import-dependabot <repo>
+                             Report how .github/dependabot.yml maps onto depmcp
   depmcp doctor              Check the environment
   depmcp status              Show state directory and database statistics
   depmcp validate [file]     Validate a configuration file (default: the global one)
@@ -97,6 +100,10 @@ func main() {
 		err = runSchedule(ctx, os.Args[2:])
 	case "resume":
 		err = runResume(ctx, os.Args[2:])
+	case "pr":
+		err = runPR(ctx, os.Args[2:])
+	case "import-dependabot":
+		err = runImportDependabot(ctx, os.Args[2:])
 	case "doctor":
 		err = runDoctor(ctx)
 	case "status":
@@ -565,6 +572,26 @@ func runResume(ctx context.Context, args []string) error {
 		return err
 	}
 	return emitJSON(map[string]any{"repository": *repo, "consecutive_failures": count})
+}
+
+func runPR(ctx context.Context, args []string) error {
+	return withRepo(ctx, args, "pr", func(svc *app.Service, runID string) error {
+		res, err := svc.OpenPullRequest(ctx, app.PublishRequest{RunID: runID})
+		if err != nil {
+			return err
+		}
+		return emitJSON(res)
+	})
+}
+
+func runImportDependabot(ctx context.Context, args []string) error {
+	return withRepo(ctx, args, "import-dependabot", func(svc *app.Service, repo string) error {
+		res, err := svc.ImportDependabot(ctx, repo)
+		if err != nil {
+			return err
+		}
+		return emitJSON(res)
+	})
 }
 
 func emitJSON(v any) error {

@@ -5,11 +5,12 @@ Dependabot's workflow, with no hosted service. It finds outdated and vulnerable
 dependencies in local repositories, turns them into reviewed update branches, and
 runs the project's build and tests before proposing anything.
 
-**Status: v0.6.0 — M5 scheduling.** depmcp inventories a repository's
+**Status: v0.7.0 — M6 forges.** depmcp inventories a repository's
 dependencies across **Go modules, npm, pnpm, Docker, and GitHub Actions**, finds
 newer versions and known vulnerabilities, builds a policy-filtered plan, applies
 it on a new git branch, and proves the result by building and testing it inside a
-sandbox — then runs on a timer with no daemon and no server. See
+sandbox — then runs on a timer with no daemon and no server, and can open pull
+requests on GitHub, GitLab, or Gitea once the result is verified. See
 [CHANGELOG.md](CHANGELOG.md) for exactly what is in and out. Design: [the specification](specs/Local%20Dependency%20Updater%20MCP%20Server%20(Go)%20%E2%80%94%20Specification.md);
 verified SDK behaviour: [M-1 spike findings](spike/mcp-probe/FINDINGS.md).
 
@@ -45,6 +46,8 @@ depmcp run --repo ~/src/project        # one-shot: plan → apply → verify →
 depmcp schedule install --repo ~/src/project
 depmcp schedule print --repo ~/src/project --kind cron
 depmcp resume --repo ~/src/project     # clear a suspended repository
+depmcp pr <run-id>         # publish a verified branch and open a pull request
+depmcp import-dependabot ~/src/project # map an existing dependabot.yml
 depmcp doctor              # environment checks
 depmcp add ~/src/project   # track a git repository (writes YAML)
 depmcp list                # tracked repositories, JSON
@@ -59,10 +62,17 @@ Register it with an MCP client (example: Claude Code):
 claude mcp add depmcp ~/.local/bin/depmcp serve
 ```
 
-Tools: `list_repositories`, `add_repository`, `update_repository`,
+Tools (20): `list_repositories`, `add_repository`, `update_repository`,
 `remove_repository`, `get_config`, `validate_config`, `status`,
 `scan_dependencies`, `check_updates`, `check_vulnerabilities`, `plan_updates`,
-`get_plan`, `apply_plan`, `verify_run`, `revert_run`, `list_runs`, `get_run`.
+`get_plan`, `apply_plan`, `verify_run`, `revert_run`, `list_runs`, `get_run`,
+`open_pull_request`, `import_dependabot`.
+
+Prompts (4): `triage_vulnerabilities`, `review_updates`,
+`explain_breaking_change`, `weekly_digest`.
+
+Forge tokens are read from `DEPMCP_GITHUB_TOKEN`, `DEPMCP_GITLAB_TOKEN`, or
+`DEPMCP_GITEA_TOKEN`. Self-hosted instances set `DEPMCP_FORGE_BASE`.
 
 `apply_plan` confirms through MCP elicitation when the client supports it and
 requires `confirm: true` otherwise; the summary it shows is computed from the
@@ -106,6 +116,8 @@ internal/sandbox/    bubblewrap and unconfined runners (Phase B isolation)
 internal/verify/     build/test orchestration and verdicts
 internal/schedule/   systemd/launchd/cron artifact generation
 internal/notify/     file, desktop, and ntfy notification channels
+internal/forge/      local, GitHub, GitLab, and Gitea publishing
+internal/dependabot/ .github/dependabot.yml import
 internal/httpcache/  shared on-disk HTTP cache with ETags
 spike/mcp-probe/   throwaway SDK capability probe from M-1
 specs/             the specification

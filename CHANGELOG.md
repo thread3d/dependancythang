@@ -7,8 +7,50 @@ milestones in [the specification](specs/Local%20Dependency%20Updater%20MCP%20Ser
 ## [Unreleased]
 
 ### Planned
-- M6: forges — GitHub, GitLab, and Gitea PRs, `dependabot.yml` import, the four
-  prompts, and documentation.
+- M7: v2 breadth — pip/uv/poetry, Cargo, and yarn v1/berry ecosystems.
+
+## [0.7.0] — 2026-11-07
+
+The M6 milestone: depmcp can publish, and it can read a dependabot.yml.
+
+### Added
+- **Forge layer** (`internal/forge`). `local` is the default and stops at a
+  verified branch, writing a markdown report; GitHub, GitLab, and Gitea/Forgejo
+  open real pull requests through their REST APIs. Pull request bodies are
+  rendered from verified facts only — a change table, advisory ids, the
+  verification result, and the exact `depmcp revert` command — and carry a marker
+  so later runs recognise and reuse their own requests instead of opening
+  duplicates. A pull request on the same branch without the marker is treated as
+  someone else's and left alone.
+- **`open_pull_request`** (MCP) and `depmcp pr`: refuse any run that has not
+  passed verification, with `NOT_VERIFIED`. Pushing is done with the user's own
+  git credentials, so no token is held for that step.
+- **`import_dependabot`** and `depmcp import-dependabot`: read
+  `.github/dependabot.yml` and report the mapping without writing anything.
+  Supported ecosystems map one-to-one (`gomod`, `npm`, `pnpm`, `docker`,
+  `github_actions`); keys with no depmcp equivalent — `labels`, `reviewers`,
+  `assignees`, `open-pull-requests-limit`, `target-branch`, `registries`, and
+  others — are listed rather than dropped. Ignore rules arrive with a placeholder
+  reason, because dependabot does not record one and depmcp requires it.
+- **The four prompts** from §7: `triage_vulnerabilities`, `review_updates`,
+  `explain_breaking_change`, and `weekly_digest`. They are written as instructions
+  over tool results, so they cannot invent findings, and they say explicitly that
+  release notes are untrusted and that an unscored advisory is not a low one.
+- Twenty MCP tools and four prompts.
+
+### Fixed
+- Forge tokens were about to be asserted in a shared test handler, which would
+  have made every tokenless test fail; authentication is now verified in one
+  dedicated test.
+
+### Known limitations
+- Tokens come from `DEPMCP_GITHUB_TOKEN`, `DEPMCP_GITLAB_TOKEN`, and
+  `DEPMCP_GITEA_TOKEN` rather than the OS keyring. The keyring wrapper is
+  designed (§3) but not wired, so `doctor` still only reports whether a session
+  bus exists.
+- `auto_pr` in configuration is still not honoured by the scheduled run; a
+  remote run must publish explicitly.
+- Prompt text is not yet exercised against a live model.
 
 ## [0.6.0] — 2026-11-07
 
