@@ -7,7 +7,54 @@ milestones in [the specification](specs/Local%20Dependency%20Updater%20MCP%20Ser
 ## [Unreleased]
 
 ### Planned
-- M1: Go-modules read path — inventory, registry lookup, advisories, plans.
+- M2: write path — planner output applied to a worktree, `apply_plan`,
+  `revert_run`, confirmation flow, TOCTOU re-validation on apply.
+
+## [0.2.0] — 2026-11-07
+
+The M1 read path: depmcp now finds out what is outdated and what is vulnerable.
+Nothing is applied yet.
+
+### Added
+- **Go module inventory** via `golang.org/x/mod/modfile`, the same parser the
+  toolchain uses. Direct and indirect requirements are distinguished, nested
+  modules are discovered, and `vendor/` is skipped.
+- **Registry client** for `proxy.golang.org` with a shared on-disk HTTP cache:
+  ETag revalidation, TTL, and an offline mode that serves stale data rather than
+  failing a scan.
+- **OSV advisory client.** The batch endpoint returns ids only, so records are
+  hydrated individually and cached; results are normalized to id, aliases,
+  severity, and fixed versions.
+- **Advisory text is treated as hostile input**: markup and markdown links are
+  stripped, whitespace collapsed, and detail text truncated before it can reach
+  a model's context.
+- **Policy engine**, pure and clock-injected: ignore rules (with mandatory
+  reason, version ranges, expiry), cooldown per update class, indirect
+  dependency suppression, allowed-class limits, advisory bypass by severity, and
+  grouping. Order of evaluation follows the specification exactly.
+- **Planner** producing immutable, content-addressed plans with per-target
+  grouping, so two modules in one repository never collapse together.
+- **Five MCP tools added**: `scan_dependencies`, `check_updates`,
+  `check_vulnerabilities`, `plan_updates`, `get_plan` — twelve tools total.
+- **CLI verbs**: `scan`, `check`, `vulns`, `plan`.
+- Schema migration 2 adds inventory snapshots, advisory rows, and plans.
+
+### Changed
+- `depmcp version` reports build identity from a dedicated package, injectable
+  with `-ldflags -X`.
+
+### Fixed
+- A cancelled MCP request surfaces as a tool result with `isError: true`.
+
+### Known limitations
+- **Severity is often `unknown`.** Go advisory records frequently carry only a
+  CVSS vector, and depmcp does not yet compute base scores from it; the label is
+  reported only when the feed supplies one directly.
+- Indirect dependencies are inventoried and reported but never proposed, except
+  when an advisory forces the bump.
+- Advisories and candidates are resolved one dependency at a time; large
+  repositories are slow on a cold cache.
+- No apply, verify, or forge integration yet.
 
 ## [0.1.0] — 2026-11-07
 

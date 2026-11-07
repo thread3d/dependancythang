@@ -31,6 +31,10 @@ Usage:
   depmcp add <path> [--forge F] [--remote R]
                              Track a git repository
   depmcp remove <path>       Stop tracking a repository
+  depmcp scan <repo>         Inventory dependencies (JSON)
+  depmcp check <repo>        Available updates (JSON)
+  depmcp vulns <repo>        Advisories affecting current versions (JSON)
+  depmcp plan <repo>         Build an update plan (JSON)
   depmcp doctor              Check the environment
   depmcp status              Show state directory and database statistics
   depmcp validate [file]     Validate a configuration file (default: the global one)
@@ -59,6 +63,14 @@ func main() {
 		err = runAdd(ctx, os.Args[2:])
 	case "remove":
 		err = runRemove(ctx, os.Args[2:])
+	case "scan":
+		err = runScan(ctx, os.Args[2:])
+	case "check":
+		err = runCheck(ctx, os.Args[2:])
+	case "vulns":
+		err = runVulns(ctx, os.Args[2:])
+	case "plan":
+		err = runPlan(ctx, os.Args[2:])
 	case "doctor":
 		err = runDoctor(ctx)
 	case "status":
@@ -275,6 +287,86 @@ func parseAnyOrder(fs *flag.FlagSet, args []string) error {
 		}
 	}
 	return fs.Parse(append(flags, positional...))
+}
+
+// withRepo runs a read-path operation for the repository named on the command
+// line, opening and closing the service around it.
+func withRepo(ctx context.Context, args []string, name string, fn func(*app.Service, string) error) error {
+	fs := flag.NewFlagSet(name, flag.ExitOnError)
+	if err := parseAnyOrder(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("%s requires exactly one repository id or path", name)
+	}
+	svc, err := app.Open(ctx)
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+	return fn(svc, fs.Arg(0))
+}
+
+func runScan(ctx context.Context, args []string) error {
+	return withRepo(ctx, args, "scan", func(svc *app.Service, ref string) error {
+		target, deps, err := svc.ScanDependencies(ctx, ref)
+		if err != nil {
+			return err
+		}
+		direct := 0
+		for _, d := range deps {
+			if d.Direct {
+				direct++
+			}
+		}
+		return emitJSON(map[string]any{
+			"repository": target, "total": len(deps), "direct": direct,
+			"dependencies": deps,
+		})
+	})
+}
+
+func runCheck(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("check", flag.ExitOnError)
+	indirect := fs.Bool("indirect", false, "also resolve transitive dependencies")
+	limit := fs.Int("limit", 0, "maximum candidates to resolve")
+	if err := parseAnyOrder(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("check requires exactly one repository id or path")
+	}
+	svc, err := app.Open(ctx)
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+
+	_, cands, err := svc.CheckUpdates(ctx, fs.Arg(0), *indirect, *limit)
+	if err != nil {
+		return err
+	}
+	return emitJSON(map[string]any{"candidates": cands, "total": len(cands)})
+}
+
+func runVulns(ctx context.Context, args []string) error {
+	return withRepo(ctx, args, "vulns", func(svc *app.Service, ref string) error {
+		_, vulns, err := svc.CheckVulnerabilities(ctx, ref)
+		if err != nil {
+			return err
+		}
+		return emitJSON(map[string]any{"vulnerabilities": vulns, "total": len(vulns)})
+	})
+}
+
+func runPlan(ctx context.Context, args []string) error {
+	return withRepo(ctx, args, "plan", func(svc *app.Service, ref string) error {
+		plan, err := svc.PlanUpdates(ctx, ref)
+		if err != nil {
+			return err
+		}
+		return emitJSON(plan)
+	})
 }
 
 func emitJSON(v any) error {

@@ -21,7 +21,7 @@ import (
 
 // SchemaVersion is the newest migration this binary knows. A database stamped
 // with a higher number refuses to open, rather than being silently downgraded.
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 // migrations are applied in order; index 0 brings a fresh database to version 1.
 // They are forward-only by design.
@@ -50,6 +50,42 @@ CREATE TABLE IF NOT EXISTS audit (
     result     TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS audit_at ON audit(at);
+`,
+
+	// Migration 2: the read path. Inventory snapshots and plans are derived
+	// from configuration plus the network, and are safe to lose.
+	`
+CREATE TABLE IF NOT EXISTS dependencies (
+    repo_id    TEXT NOT NULL,
+    target     TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    current    TEXT NOT NULL,
+    direct     INTEGER NOT NULL DEFAULT 0,
+    scanned_at INTEGER NOT NULL,
+    PRIMARY KEY (repo_id, target, name)
+);
+
+CREATE TABLE IF NOT EXISTS advisories (
+    repo_id  TEXT NOT NULL,
+    target   TEXT NOT NULL,
+    package  TEXT NOT NULL,
+    version  TEXT NOT NULL,
+    id       TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'unknown',
+    payload  TEXT NOT NULL DEFAULT '',
+    seen_at  INTEGER NOT NULL,
+    PRIMARY KEY (repo_id, target, package, version, id)
+);
+
+CREATE TABLE IF NOT EXISTS plans (
+    plan_id    TEXT PRIMARY KEY,
+    repo_id    TEXT NOT NULL,
+    target     TEXT NOT NULL,
+    ecosystem  TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    plan_json  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS plans_repo ON plans(repo_id, created_at);
 `,
 }
 
