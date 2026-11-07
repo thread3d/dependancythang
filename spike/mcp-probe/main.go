@@ -64,9 +64,9 @@ func registerTools(s *mcp.Server) {
 		Repeat  int    `json:"repeat,omitempty" jsonschema:"how many times to repeat it"`
 	}
 	type pingOut struct {
-		Echo    string `json:"echo"`
-		Length  int    `json:"length"`
-		Repeated int   `json:"repeated"`
+		Echo     string `json:"echo"`
+		Length   int    `json:"length"`
+		Repeated int    `json:"repeated"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "ping",
@@ -96,18 +96,18 @@ func registerTools(s *mcp.Server) {
 		Reason string `json:"reason" jsonschema:"what the write would do"`
 	}
 	type confirmOut struct {
-		Action   string         `json:"action"` // accept | decline | cancel | unavailable
-		Detail   string         `json:"detail"`
-		Consent  map[string]any `json:"consent,omitempty"`
+		Action  string         `json:"action"` // accept | decline | cancel | unavailable
+		Detail  string         `json:"detail"`
+		Consent map[string]any `json:"consent,omitempty"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "confirm_write",
 		Description: "Write-shaped tool gated behind MCP elicitation. Reports exactly what the client answered.",
 		Annotations: &mcp.ToolAnnotations{
-			ReadOnlyHint:   false,
+			ReadOnlyHint:    false,
 			DestructiveHint: ref(true),
-			IdempotentHint: true,
-			OpenWorldHint:  ref(false),
+			IdempotentHint:  true,
+			OpenWorldHint:   ref(false),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, in confirmIn) (*mcp.CallToolResult, confirmOut, error) {
 		if req.Session == nil {
@@ -137,11 +137,11 @@ func registerTools(s *mcp.Server) {
 		Steps int `json:"steps,omitempty" jsonschema:"number of steps (default 4)"`
 	}
 	type slowOut struct {
-		Steps      int    `json:"steps"`
-		HadToken   bool   `json:"had_progress_token"`
-		Notices    int    `json:"notices_sent"`
-		Elapsed    string `json:"elapsed"`
-		Cancelled  bool   `json:"cancelled"`
+		Steps     int    `json:"steps"`
+		HadToken  bool   `json:"had_progress_token"`
+		Notices   int    `json:"notices_sent"`
+		Elapsed   string `json:"elapsed"`
+		Cancelled bool   `json:"cancelled"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "slow_task",

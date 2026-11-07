@@ -1,0 +1,13 @@
+# Build artifacts
+/depmcp
+/depmcp.exe
+*.test
+*.out
+
+# Local state / probe scratch
+/.gopath/
+/.probe*/
+/.cache-gh/
+*.db
+*.db-wal
+*.db-shm

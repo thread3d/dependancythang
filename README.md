@@ -1,0 +1,72 @@
+# DependancyThang — `depmcp`
+
+A local dependency updater exposed over the [Model Context Protocol](https://modelcontextprotocol.io):
+Dependabot's workflow, with no hosted service. It finds outdated and vulnerable
+dependencies in local repositories, turns them into reviewed update branches, and
+runs the project's build and tests before proposing anything.
+
+**Status: M0 (skeleton).** See [the specification](specs/Local%20Dependency%20Updater%20MCP%20Server%20(Go)%20%E2%80%94%20Specification.md)
+for the full design and the [M-1 spike findings](spike/mcp-probe/FINDINGS.md) for
+the verified SDK behaviour this is built on.
+
+There is no daemon and no listening socket. `depmcp serve` speaks MCP on
+stdin/stdout; scheduling will be an external systemd timer invoking one-shot
+commands.
+
+## Build
+
+Requires Go ≥ 1.25 and no C compiler (builds are `CGO_ENABLED=0`).
+
+```bash
+go build ./...
+go test ./...
+go build -o ~/.local/bin/depmcp ./cmd/depmcp
+```
+
+## Use
+
+```bash
+depmcp doctor              # environment checks
+depmcp add ~/src/project   # track a git repository (writes YAML)
+depmcp list                # tracked repositories, JSON
+depmcp remove ~/src/project
+depmcp validate            # validate the configuration
+depmcp serve               # MCP server on stdio
+```
+
+Register it with an MCP client (example: Claude Code):
+
+```bash
+claude mcp add depmcp ~/.local/bin/depmcp serve
+```
+
+Tools available in M0: `list_repositories`, `add_repository`, `update_repository`,
+`remove_repository`, `get_config`, `validate_config`, `status`.
+
+## Configuration
+
+YAML is the single source of truth: which repositories are tracked and what policy
+applies is committed, reviewable text. The SQLite database under the state
+directory holds only derived state (scan timestamps, runs, caches, audit index), so
+deleting it loses history, never intent.
+
+- Global: `$XDG_CONFIG_HOME/depmcp/config.yaml` (usually `~/.config/depmcp/config.yaml`)
+- Per repository: `.depmcp.yml` in the repository root
+- Overrides: `DEPMCP_CONFIG`, `DEPMCP_STATE_DIR`
+
+Mutation tools edit the YAML node tree, preserving comments and key order, then
+write temp → fsync → rename, and detect concurrent hand-edits by hash.
+
+## Layout
+
+```
+cmd/depmcp/        CLI: serve, add, remove, list, doctor, status, validate
+internal/app/      wiring, stable error codes, doctor
+internal/config/   layered load, strict decode, atomic Node-preserving edits
+internal/mcpserver MCP tool registration
+internal/store/    SQLite derived state + migrations
+internal/repolock/ per-repository flock (the whole concurrency design)
+internal/audit/    append-only JSONL audit log
+spike/mcp-probe/   throwaway SDK capability probe from M-1
+specs/             the specification
+```
