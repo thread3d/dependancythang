@@ -7,8 +7,51 @@ milestones in [the specification](specs/Local%20Dependency%20Updater%20MCP%20Ser
 ## [Unreleased]
 
 ### Planned
-- M2: write path — planner output applied to a worktree, `apply_plan`,
-  `revert_run`, confirmation flow, TOCTOU re-validation on apply.
+- M3: sandboxed verification — run the project's build and tests in a
+  bubblewrap sandbox before a branch is offered, plus `verify_run`.
+
+## [0.3.0] — 2026-11-07
+
+The M2 write path: depmcp now applies a plan on a new branch, and can undo it.
+Nothing runs the project's tests yet — that is M3.
+
+### Added
+- **`apply_plan`**: fetches the default branch, creates a real `git worktree` and
+  a `depmcp/<ecosystem>-<date>` branch, runs the toolchain there, and commits.
+  The user's working tree, index, and uncommitted work are never touched.
+- **TOCTOU re-validation** before any write: a plan whose target version has
+  vanished, been yanked, or slipped back inside its cooldown is refused with
+  `PLAN_STALE`, `VERSION_YANKED`, or `COOLDOWN_ACTIVE` rather than silently
+  retargeted.
+- **`revert_run`**: deletes the branch and worktree, subject to the §12 state
+  machine — a merged or closed run is terminal and is only reported.
+- **`list_runs` / `get_run`**, plus CLI verbs `apply`, `revert`, `runs`.
+- **Conventional commit messages** generated from plan data, listing every change,
+  its update class, and the advisory ids that drove it.
+- **Crash-safe apply**: a failure after the worktree exists removes both the
+  worktree and the branch, and records the run as `failed` with the real error.
+- **CVSS base scores** (v3.0 and v3.1). Advisories that publish only a vector now
+  get a computed severity instead of `unknown`, and each advisory carries a
+  numeric score plus the provenance of its label (`database`, `cvss`, `alias:<id>`,
+  or `none`).
+- **`unknown` severity is now scored, not missing**: it has a defined score and
+  rank below `low`, so it participates in sorting and thresholding while never
+  triggering a cooldown bypass.
+- Schema migration 3 adds the `runs` table.
+
+### Changed
+- Advisory severity resolution follows a chain: declared label, then computed
+  CVSS, then the aliased record (Go advisories usually alias a GHSA that carries
+  severity), then `unknown`.
+
+### Known limitations
+- Verification (builds and tests in a sandbox) is not implemented; a run stops at
+  `applied`.
+- Advisories whose records carry no severity, no CVSS vector, and no informative
+  alias remain `unknown` — for example `GO-2026-5024`, whose CVE alias is silent
+  too. This is a data limitation, not a parsing gap, and is now visible as
+  `severity_source: none`.
+- CVSS v4 vectors are not scored; those records fall through to the alias lookup.
 
 ## [0.2.0] — 2026-11-07
 

@@ -30,6 +30,7 @@ func New(svc *app.Service) *mcp.Server {
 	registerConfigTools(s, svc)
 	registerStatusTool(s, svc)
 	registerReadTools(s, svc)
+	registerWriteTools(s, svc)
 	return s
 }
 

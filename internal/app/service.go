@@ -17,6 +17,8 @@ import (
 
 	"github.com/thread3d/dependancythang/internal/audit"
 	"github.com/thread3d/dependancythang/internal/config"
+	"github.com/thread3d/dependancythang/internal/ecosystem"
+	"github.com/thread3d/dependancythang/internal/ecosystem/gomod"
 	"github.com/thread3d/dependancythang/internal/repolock"
 	"github.com/thread3d/dependancythang/internal/store"
 	"gopkg.in/yaml.v3"
@@ -59,7 +61,14 @@ func CodeOf(err error) string {
 }
 
 // Service is an initialised depmcp runtime.
+//
+// Registry and Apply are seams: production leaves them nil and gets the live
+// registry and the real Go toolchain, while tests inject fakes so they never
+// touch the network or compile anything.
 type Service struct {
+	Registry ecosystem.Registry
+	Apply    func(context.Context, string, []gomod.Change) (gomod.ApplyResult, error)
+
 	ConfigPath string
 	Cfg        *config.Config
 	Sources    *config.Sources

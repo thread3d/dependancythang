@@ -35,14 +35,20 @@ const maxText = 512
 
 // Advisory is a normalized vulnerability record.
 type Advisory struct {
-	ID            string   `json:"id"`
-	Aliases       []string `json:"aliases,omitempty"`
-	Summary       string   `json:"summary,omitempty"`
-	Detail        string   `json:"detail,omitempty"` // truncated; untrusted
-	Severity      Severity `json:"severity"`
-	Published     string   `json:"published,omitempty"`
-	Withdrawn     string   `json:"withdrawn,omitempty"`
-	FixedVersions []string `json:"fixed_versions,omitempty"`
+	ID       string   `json:"id"`
+	Aliases  []string `json:"aliases,omitempty"`
+	Summary  string   `json:"summary,omitempty"`
+	Detail   string   `json:"detail,omitempty"` // truncated; untrusted
+	Severity Severity `json:"severity"`
+	// Score is the numeric base score (CVSS when available, otherwise the
+	// representative score for the label). Every advisory has one.
+	Score float64 `json:"score"`
+	// SeveritySource records where the label came from, so "unknown" is
+	// distinguishable from "deliberately unscored".
+	SeveritySource string   `json:"severity_source,omitempty"`
+	Published      string   `json:"published,omitempty"`
+	Withdrawn      string   `json:"withdrawn,omitempty"`
+	FixedVersions  []string `json:"fixed_versions,omitempty"`
 }
 
 // Query asks about one package version.
@@ -154,7 +160,11 @@ func (c *Client) fetchAdvisory(ctx context.Context, id string) (Advisory, error)
 	if err := json.Unmarshal([]byte(body), &raw); err != nil {
 		return Advisory{}, fmt.Errorf("decode osv %s: %w", id, err)
 	}
-	return normalize(raw), nil
+	a := normalize(raw)
+	if a.Severity == SeverityUnknown {
+		a.Severity, a.Score, a.SeveritySource = c.escalateFromAliases(ctx, a)
+	}
+	return a, nil
 }
 
 type rawVuln struct {
@@ -166,7 +176,12 @@ type rawVuln struct {
 	Withdrawn        string   `json:"withdrawn"`
 	DatabaseSpecific struct {
 		Severity string `json:"severity"`
+		Score    string `json:"score"`
 	} `json:"database_specific"`
+	Severity []struct {
+		Type  string `json:"type"`
+		Score string `json:"score"`
+	} `json:"severity"`
 	Affected []struct {
 		Package struct {
 			Ecosystem string `json:"ecosystem"`
@@ -192,8 +207,8 @@ func normalize(raw rawVuln) Advisory {
 		Detail:    sanitize(raw.Details, maxText),
 		Published: raw.Published,
 		Withdrawn: raw.Withdrawn,
-		Severity:  normalizeSeverity(raw.DatabaseSpecific.Severity),
 	}
+	a.Severity, a.Score, a.SeveritySource = resolveSeverity(raw)
 	seen := map[string]bool{}
 	for _, affected := range raw.Affected {
 		if !strings.EqualFold(affected.Package.Ecosystem, "Go") &&
@@ -211,6 +226,54 @@ func normalize(raw rawVuln) Advisory {
 		}
 	}
 	return a
+}
+
+// resolveSeverity determines the label and score for a record, in order of
+// trustworthiness: an explicit feed label, then a computable CVSS vector, then
+// the representative score for the label. The source is reported so callers can
+// tell a computed severity from a declared one.
+func resolveSeverity(raw rawVuln) (Severity, float64, string) {
+	if label := normalizeSeverity(raw.DatabaseSpecific.Severity); label != SeverityUnknown {
+		return label, ScoreFor(label), "database"
+	}
+	if score, ok := parseScoreString(raw.DatabaseSpecific.Score); ok && score > 0 {
+		return SeverityFromScore(score), score, "database"
+	}
+	// CVSS vectors are the most common source in practice; GHSA-sourced records
+	// almost always carry one even when no label is given.
+	for _, sv := range raw.Severity {
+		if !strings.HasPrefix(strings.ToUpper(sv.Type), "CVSS_V3") {
+			continue // v4 uses a different scoring model and is not implemented
+		}
+		if score, ok := parseScoreString(sv.Score); ok && score > 0 {
+			return SeverityFromScore(score), score, "cvss"
+		}
+	}
+	return SeverityUnknown, ScoreFor(SeverityUnknown), "none"
+}
+
+// escalateFromAliases consults aliased records when a record carries no severity
+// at all. Go advisories usually alias a GHSA/CVE record that does, so this
+// recovers a label for the common case without inventing one.
+func (c *Client) escalateFromAliases(ctx context.Context, a Advisory) (Severity, float64, string) {
+	for _, alias := range a.Aliases {
+		if alias == "" || alias == a.ID {
+			continue
+		}
+		body, err := c.http.Get(ctx, c.base+"/v1/vulns/"+url.PathEscape(alias))
+		if err != nil {
+			continue
+		}
+		var raw rawVuln
+		if err := json.Unmarshal([]byte(body), &raw); err != nil {
+			continue
+		}
+		label, score, _ := resolveSeverity(raw)
+		if label != SeverityUnknown {
+			return label, score, "alias:" + alias
+		}
+	}
+	return SeverityUnknown, ScoreFor(SeverityUnknown), "none"
 }
 
 // normalizeSeverity maps feed labels onto our four buckets.

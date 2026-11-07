@@ -22,10 +22,16 @@ import (
 const Name = "gomod"
 
 // Ecosystem is the Go modules implementation.
-type Ecosystem struct{}
+type Ecosystem struct {
+	runner Runner
+}
 
-// New returns the Go modules ecosystem.
-func New() *Ecosystem { return &Ecosystem{} }
+// New returns the Go modules ecosystem, using the real toolchain.
+func New() *Ecosystem { return &Ecosystem{runner: ExecRunner{}} }
+
+// NewWithRunner returns an ecosystem that runs commands through r, so tests can
+// exercise the applier without a Go toolchain or network.
+func NewWithRunner(r Runner) *Ecosystem { return &Ecosystem{runner: r} }
 
 // Name implements ecosystem.Ecosystem.
 func (*Ecosystem) Name() string { return Name }

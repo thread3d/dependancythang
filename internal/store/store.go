@@ -21,7 +21,7 @@ import (
 
 // SchemaVersion is the newest migration this binary knows. A database stamped
 // with a higher number refuses to open, rather than being silently downgraded.
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 // migrations are applied in order; index 0 brings a fresh database to version 1.
 // They are forward-only by design.
@@ -86,6 +86,25 @@ CREATE TABLE IF NOT EXISTS plans (
     plan_json  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS plans_repo ON plans(repo_id, created_at);
+`,
+
+	// Migration 3: the write path. A run is the record of one branch.
+	`
+CREATE TABLE IF NOT EXISTS runs (
+    run_id     TEXT PRIMARY KEY,
+    repo_id    TEXT NOT NULL,
+    plan_id    TEXT NOT NULL,
+    target     TEXT NOT NULL DEFAULT '',
+    branch     TEXT NOT NULL,
+    worktree   TEXT NOT NULL DEFAULT '',
+    status     TEXT NOT NULL,
+    commit_sha TEXT NOT NULL DEFAULT '',
+    detail     TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS runs_repo ON runs(repo_id, created_at);
+CREATE INDEX IF NOT EXISTS runs_status ON runs(status);
 `,
 }
 

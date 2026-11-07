@@ -41,6 +41,9 @@ func ecosystemFor(name string) (ecosystem.Ecosystem, error) {
 
 // registryFor builds a registry client bound to the state directory cache.
 func (s *Service) registryFor() (ecosystem.Registry, error) {
+	if s.Registry != nil {
+		return s.Registry, nil
+	}
 	return registry.NewClient(registry.ProxyURL,
 		filepath.Join(s.stateDir, "caches", "registry"), s.Cfg.Server.Offline)
 }

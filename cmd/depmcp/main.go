@@ -35,6 +35,10 @@ Usage:
   depmcp check <repo>        Available updates (JSON)
   depmcp vulns <repo>        Advisories affecting current versions (JSON)
   depmcp plan <repo>         Build an update plan (JSON)
+  depmcp apply <plan-id> --confirm
+                             Apply a plan on a new branch (worktree)
+  depmcp revert <run-id>     Delete a run's branch and worktree
+  depmcp runs [repo]         Recent apply runs
   depmcp doctor              Check the environment
   depmcp status              Show state directory and database statistics
   depmcp validate [file]     Validate a configuration file (default: the global one)
@@ -71,6 +75,12 @@ func main() {
 		err = runVulns(ctx, os.Args[2:])
 	case "plan":
 		err = runPlan(ctx, os.Args[2:])
+	case "apply":
+		err = runApply(ctx, os.Args[2:])
+	case "revert":
+		err = runRevert(ctx, os.Args[2:])
+	case "runs":
+		err = runRuns(ctx, os.Args[2:])
 	case "doctor":
 		err = runDoctor(ctx)
 	case "status":
@@ -367,6 +377,61 @@ func runPlan(ctx context.Context, args []string) error {
 		}
 		return emitJSON(plan)
 	})
+}
+
+func runApply(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("apply", flag.ExitOnError)
+	confirm := fs.Bool("confirm", false, "confirm applying the plan on a new branch")
+	if err := parseAnyOrder(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("apply requires exactly one plan id")
+	}
+	svc, err := app.Open(ctx)
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+
+	run, err := svc.ApplyPlan(ctx, fs.Arg(0), *confirm)
+	if err != nil {
+		return err
+	}
+	return emitJSON(run)
+}
+
+func runRevert(ctx context.Context, args []string) error {
+	return withRepo(ctx, args, "revert", func(svc *app.Service, runID string) error {
+		run, err := svc.RevertRun(ctx, runID)
+		if err != nil {
+			return err
+		}
+		return emitJSON(run)
+	})
+}
+
+func runRuns(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("runs", flag.ExitOnError)
+	limit := fs.Int("limit", 20, "maximum runs to list")
+	if err := parseAnyOrder(fs, args); err != nil {
+		return err
+	}
+	svc, err := app.Open(ctx)
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+
+	repo := ""
+	if fs.NArg() == 1 {
+		repo = fs.Arg(0)
+	}
+	runs, err := svc.ListRuns(ctx, repo, *limit)
+	if err != nil {
+		return err
+	}
+	return emitJSON(map[string]any{"runs": runs, "total": len(runs)})
 }
 
 func emitJSON(v any) error {
