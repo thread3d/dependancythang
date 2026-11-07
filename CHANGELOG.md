@@ -7,7 +7,70 @@ milestones in [the specification](specs/Local%20Dependency%20Updater%20MCP%20Ser
 ## [Unreleased]
 
 ### Planned
-- M4: npm/pnpm, Docker, and GitHub Actions ecosystems behind the same interface.
+- M5: scheduling without a daemon — one-shot `run`, systemd/launchd/cron unit
+  generation, notifications, failure counting.
+
+## [0.5.0] — 2026-11-07
+
+The M4 ecosystems: npm, pnpm, Docker, and GitHub Actions behind one interface,
+plus the interface changes that made that possible.
+
+### Added
+- **npm and pnpm** (`internal/ecosystem/nodejs`, one implementation, two names).
+  `package.json` is read for runtime, optional, peer, and dev requirements; the
+  lockfile supplies the pinned version. All three `package-lock.json` shapes are
+  handled — v1 `dependencies`, v2 both sections with `packages` winning, v3
+  `packages` only — and nested transitive copies are not mistaken for the
+  top-level package. pnpm's `.yaml` is read for v6 and v9, with the peer suffix
+  (`4.17.21(react@18)`) stripped. Detection is mutually exclusive, so a project
+  is never inventoried under two names, and a stale `package-lock.json` beside a
+  `pnpm-lock.yaml` does not make it npm.
+- **Docker**: `FROM` lines and Compose `image:` keys, with tag and digest
+  updates. Rewrites preserve everything else on the line — the `AS build` alias,
+  `--platform` flags, quoting — and never touch a mention outside a manifest
+  (a `LABEL` naming `alpine:3.20` stays put). `scratch` is skipped, registry
+  ports (`localhost:5000/app:2.1`) are not read as tags, and an unqualified image
+  implies `latest`.
+- **GitHub Actions**: `uses:` refs, with hardened pinning. A change carrying a
+  commit SHA is written as the SHA plus the human-readable tag as a trailing
+  comment. Local actions (`./x`) and `docker://` refs are skipped, one entry per
+  action regardless of how many jobs use it.
+- **Tag sources** (`internal/tags`): registry.npmjs.org, Docker Hub, and the
+  GitHub REST API, all through the shared ETag cache. Docker Hub and GitHub
+  supply a digest/SHA alongside each tag, which is what the pinning above needs.
+- **Ecosystem-agnostic write path**: `Apply` and `ApplyResult` moved into the
+  ecosystem package, plans apply group by group with the owning ecosystem, and
+  re-validation resolves the right registry per group. A plan spanning a
+  Dockerfile and a workflow now applies both in one commit.
+- **Project-level verification**: verify collects commands from every ecosystem
+  detected in the repository rather than only the changed one, so a workflow-only
+  change is still proved by the project's Go or npm build.
+- `ClassPin` and `ClassDigest` update classes, so tags and refs are never
+  mislabelled as unclassifiable, and both use the patch cooldown.
+- Schema: plans and decisions carry a `digest`; dependencies carry `dev`.
+
+### Fixed
+- Plan groups were labelled with a single hardcoded ecosystem, and a leftover
+  `SetTarget` stamped the first target onto every group — so a two-ecosystem plan
+  claimed every change belonged to `gomod` on `docker:/`.
+- Plan re-validation resolved the Go module proxy for every change, so an Action
+  ref was sent to the Go proxy and rejected as a malformed module path.
+
+### Verified
+Golden diffs for every row of the specification's lockfile matrix: `go.mod`,
+`package-lock.json` v1/v2/v3, `pnpm-lock.yaml` v6/v9, Dockerfile, Compose, and a
+workflow file. Live end-to-end: a repository holding a Dockerfile, a Compose file,
+and a workflow produced one commit pinning `actions/checkout` to a SHA with a
+`# v7.0.1` comment and both images to their digests, leaving the working tree
+clean.
+
+### Known limitations
+- yarn v1 and yarn berry are still unimplemented (v1.1 in the plan).
+- Docker Hub and GitHub tag lists are read one page deep (100 tags), and GitHub's
+  anonymous API is rate limited.
+- npm verification needs `node_modules` from the apply step; the sandbox has no
+  network and no shared build cache, so a repository without a lockfile cannot be
+  verified.
 
 ## [0.4.0] — 2026-11-07
 

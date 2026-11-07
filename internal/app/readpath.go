@@ -14,11 +14,15 @@ import (
 	"github.com/thread3d/dependancythang/internal/advisory"
 	"github.com/thread3d/dependancythang/internal/config"
 	"github.com/thread3d/dependancythang/internal/ecosystem"
+	"github.com/thread3d/dependancythang/internal/ecosystem/actions"
+	"github.com/thread3d/dependancythang/internal/ecosystem/docker"
 	"github.com/thread3d/dependancythang/internal/ecosystem/gomod"
+	"github.com/thread3d/dependancythang/internal/ecosystem/nodejs"
 	"github.com/thread3d/dependancythang/internal/planner"
 	"github.com/thread3d/dependancythang/internal/policy"
 	"github.com/thread3d/dependancythang/internal/registry"
 	"github.com/thread3d/dependancythang/internal/store"
+	"github.com/thread3d/dependancythang/internal/tags"
 )
 
 // Stable codes introduced by the read path (§7).
@@ -34,18 +38,93 @@ func ecosystemFor(name string) (ecosystem.Ecosystem, error) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "", "gomod":
 		return gomod.New(), nil
+	case "npm":
+		return nodejs.NewNpm(), nil
+	case "pnpm":
+		return nodejs.NewPnpm(), nil
+	case "docker":
+		return docker.New(), nil
+	case "actions":
+		return actions.New(), nil
 	default:
-		return nil, fmt.Errorf("ecosystem %q is not implemented yet (v1 supports gomod)", name)
+		return nil, fmt.Errorf("ecosystem %q is not supported", name)
 	}
 }
 
-// registryFor builds a registry client bound to the state directory cache.
-func (s *Service) registryFor() (ecosystem.Registry, error) {
+// allEcosystems returns every supported ecosystem, in a stable order.
+func allEcosystems() []ecosystem.Ecosystem {
+	return []ecosystem.Ecosystem{
+		gomod.New(), nodejs.NewNpm(), nodejs.NewPnpm(), docker.New(), actions.New(),
+	}
+}
+
+// ecosystemOfTarget extracts the ecosystem name from a target key such as
+// "npm:/web".
+func ecosystemOfTarget(target string) string {
+	if i := strings.Index(target, ":"); i > 0 {
+		return target[:i]
+	}
+	return "gomod"
+}
+
+// tagRegistry adapts a tag Source to the registry shape policy expects.
+type tagRegistry struct{ src tags.Source }
+
+// Versions implements ecosystem.Registry.
+func (t tagRegistry) Versions(ctx context.Context, ref string) ([]ecosystem.Version, error) {
+	return t.src.Tags(ctx, ref)
+}
+
+// PublishTime implements ecosystem.Registry by looking the version up in the
+// tag list, because these sources do not offer a per-version endpoint.
+func (t tagRegistry) PublishTime(ctx context.Context, ref, version string) (string, error) {
+	versions, err := t.src.Tags(ctx, ref)
+	if err != nil {
+		return "", err
+	}
+	for _, v := range versions {
+		if v.Raw == version {
+			return v.PublishedAt, nil
+		}
+	}
+	return "", nil
+}
+
+// registryForEcosystem builds the right candidate source for an ecosystem.
+func (s *Service) registryForEcosystem(name string) (ecosystem.Registry, error) {
 	if s.Registry != nil {
 		return s.Registry, nil
 	}
-	return registry.NewClient(registry.ProxyURL,
-		filepath.Join(s.stateDir, "caches", "registry"), s.Cfg.Server.Offline)
+	cacheDir := filepath.Join(s.stateDir, "caches", "registry")
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "", "gomod":
+		return registry.NewClient(registry.ProxyURL, cacheDir, s.Cfg.Server.Offline)
+	case "npm", "pnpm":
+		src, err := tags.NewNPM(cacheDir, s.Cfg.Server.Offline)
+		if err != nil {
+			return nil, err
+		}
+		return tagRegistry{src: src}, nil
+	case "docker":
+		src, err := tags.NewDockerHub(cacheDir, s.Cfg.Server.Offline)
+		if err != nil {
+			return nil, err
+		}
+		return tagRegistry{src: src}, nil
+	case "actions":
+		src, err := tags.NewGitHub(cacheDir, s.Cfg.Server.Offline)
+		if err != nil {
+			return nil, err
+		}
+		return tagRegistry{src: src}, nil
+	default:
+		return nil, fmt.Errorf("no registry for ecosystem %q", name)
+	}
+}
+
+// registryFor keeps the gomod call sites working.
+func (s *Service) registryFor() (ecosystem.Registry, error) {
+	return s.registryForEcosystem("gomod")
 }
 
 // advisoryClient builds an OSV client bound to the state directory cache.
@@ -90,31 +169,30 @@ func (s *Service) ScanDependencies(ctx context.Context, repoRef string) (RepoTar
 	if err != nil {
 		return RepoTarget{}, nil, err
 	}
-	eco, err := ecosystemFor("gomod")
-	if err != nil {
-		return RepoTarget{}, nil, err
-	}
-	targets, err := eco.Detect(ctx, path)
-	if err != nil {
-		return RepoTarget{}, nil, err
-	}
-	out := RepoTarget{ID: config.RepoID(path), Path: path, Targets: targets}
+	out := RepoTarget{ID: config.RepoID(path), Path: path}
 
 	var all []ecosystem.Dependency
 	now := time.Now()
-	for _, t := range targets {
-		deps, err := eco.Inventory(ctx, t)
-		if err != nil {
-			return out, all, err
+	for _, eco := range allEcosystems() {
+		targets, derr := eco.Detect(ctx, path)
+		if derr != nil {
+			return out, all, derr
 		}
-		rows := make([]store.DependencyRow, 0, len(deps))
-		for _, d := range deps {
-			rows = append(rows, store.DependencyRow{Name: d.Name, Current: d.Current, Direct: d.Direct})
+		for _, t := range targets {
+			deps, ierr := eco.Inventory(ctx, t)
+			if ierr != nil {
+				return out, all, ierr
+			}
+			out.Targets = append(out.Targets, t)
+			rows := make([]store.DependencyRow, 0, len(deps))
+			for _, d := range deps {
+				rows = append(rows, store.DependencyRow{Name: d.Name, Current: d.Current, Direct: d.Direct})
+			}
+			if serr := s.Store.SaveInventory(ctx, out.ID, t.Key(), rows, now); serr != nil {
+				return out, all, serr
+			}
+			all = append(all, deps...)
 		}
-		if err := s.Store.SaveInventory(ctx, out.ID, t.Key(), rows, now); err != nil {
-			return out, all, err
-		}
-		all = append(all, deps...)
 	}
 	_ = s.Store.MarkScanned(ctx, out.ID, now)
 	_ = repo
@@ -123,9 +201,12 @@ func (s *Service) ScanDependencies(ctx context.Context, repoRef string) (RepoTar
 
 // Candidate is one dependency with the versions available to it.
 type Candidate struct {
-	Dependency  string                `json:"dependency"`
-	From        string                `json:"from"`
-	Latest      string                `json:"latest,omitempty"`
+	Dependency string `json:"dependency"`
+	From       string `json:"from"`
+	Latest     string `json:"latest,omitempty"`
+	// Digest is the pinned identity for the candidate, when the ecosystem has
+	// one (Docker manifest digest, Action commit SHA).
+	Digest      string                `json:"digest,omitempty"`
 	Class       ecosystem.UpdateClass `json:"class"`
 	PublishedAt string                `json:"published_at,omitempty"`
 	Direct      bool                  `json:"direct"`
@@ -141,20 +222,33 @@ func (s *Service) CheckUpdates(ctx context.Context, repoRef string, includeIndir
 	if err != nil {
 		return repoTarget, nil, err
 	}
-	eco, err := ecosystemFor("gomod")
-	if err != nil {
-		return repoTarget, nil, err
-	}
-	reg, err := s.registryFor()
-	if err != nil {
-		return repoTarget, nil, err
-	}
+	ecos, regs := map[string]ecosystem.Ecosystem{}, map[string]ecosystem.Registry{}
 
 	var out []Candidate
 	for _, d := range deps {
 		if !d.Direct && !includeIndirect {
 			continue
 		}
+		ecoName := ecosystemOfTarget(d.Target)
+		eco, ok := ecos[ecoName]
+		if !ok {
+			var eerr error
+			eco, eerr = ecosystemFor(ecoName)
+			if eerr != nil {
+				return repoTarget, out, eerr
+			}
+			ecos[ecoName] = eco
+		}
+		reg, ok := regs[ecoName]
+		if !ok {
+			var rerr error
+			reg, rerr = s.registryForEcosystem(ecoName)
+			if rerr != nil {
+				return repoTarget, out, rerr
+			}
+			regs[ecoName] = reg
+		}
+
 		c := Candidate{Dependency: d.Name, From: d.Current, Direct: d.Direct, Target: d.Target}
 		versions, verr := reg.Versions(ctx, d.Name)
 		if verr != nil {
@@ -170,12 +264,15 @@ func (s *Service) CheckUpdates(ctx context.Context, repoRef string, includeIndir
 			if strings.Contains(v.Raw, "-") && !strings.Contains(d.Current, "-") {
 				continue
 			}
-			if eco.Compare(v.Raw, d.Current) <= 0 {
+			// An unknown current version cannot be ordered against; take the
+			// newest candidate and let classification report what it can.
+			if d.Current != "" && eco.Compare(v.Raw, d.Current) <= 0 {
 				continue
 			}
 			c.Latest = v.Raw
+			c.Digest = v.Digest
 			c.Class = eco.Classify(d.Current, v.Raw)
-			c.PublishedAt, _ = reg.PublishTime(ctx, d.Name, v.Raw)
+			c.PublishedAt = v.PublishedAt
 			break
 		}
 		out = append(out, c)
@@ -297,22 +394,34 @@ func (s *Service) PlanUpdates(ctx context.Context, repoRef string) (planner.Plan
 	if err != nil {
 		return planner.Plan{}, err
 	}
-	eco, err := ecosystemFor("gomod")
-	if err != nil {
-		return planner.Plan{}, err
-	}
-	reg, err := s.registryFor()
-	if err != nil {
-		return planner.Plan{}, err
-	}
 	osvc, err := s.advisoryClient()
 	if err != nil {
 		return planner.Plan{}, err
 	}
 	rules := s.policyRules(time.Now())
+	ecos, regs := map[string]ecosystem.Ecosystem{}, map[string]ecosystem.Registry{}
 
 	var decisions []policy.Decision
 	for _, d := range deps {
+		ecoName := ecosystemOfTarget(d.Target)
+		eco, ok := ecos[ecoName]
+		if !ok {
+			e, eerr := ecosystemFor(ecoName)
+			if eerr != nil {
+				return planner.Plan{}, eerr
+			}
+			ecos[ecoName] = e
+			eco = e
+		}
+		reg, ok := regs[ecoName]
+		if !ok {
+			r, rerr := s.registryForEcosystem(ecoName)
+			if rerr != nil {
+				return planner.Plan{}, rerr
+			}
+			regs[ecoName] = r
+			reg = r
+		}
 		in := policy.Input{Dep: d, Classify: eco.Classify, Compare: eco.Compare}
 		if versions, verr := reg.Versions(ctx, d.Name); verr == nil {
 			in.Candidates = versions
@@ -322,13 +431,14 @@ func (s *Service) PlanUpdates(ctx context.Context, repoRef string) (planner.Plan
 		}}); aerr == nil && len(advisories) == 1 {
 			in.Advisories = advisories[0]
 		}
-		decisions = append(decisions, policy.Decide(in, rules))
+		dec := policy.Decide(in, rules)
+		dec.Ecosystem = ecoName
+		decisions = append(decisions, dec)
 	}
 
-	plan := planner.Build(decisions, "gomod", repoTarget.ID, time.Now())
-	if len(repoTarget.Targets) > 0 {
-		plan.SetTarget(repoTarget.Targets[0].Key())
-	}
+	// Each group already carries its own target; a plan can span ecosystems, so
+	// there is no single target to stamp over them.
+	plan := planner.Build(decisions, "", repoTarget.ID, time.Now())
 	data, err := json.Marshal(plan)
 	if err != nil {
 		return plan, fmt.Errorf("encode plan: %w", err)

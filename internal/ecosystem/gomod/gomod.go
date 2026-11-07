@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/thread3d/dependancythang/internal/ecosystem"
+	"github.com/thread3d/dependancythang/internal/execx"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/semver"
 )
@@ -23,15 +24,15 @@ const Name = "gomod"
 
 // Ecosystem is the Go modules implementation.
 type Ecosystem struct {
-	runner Runner
+	runner execx.Runner
 }
 
 // New returns the Go modules ecosystem, using the real toolchain.
-func New() *Ecosystem { return &Ecosystem{runner: ExecRunner{}} }
+func New() *Ecosystem { return &Ecosystem{runner: execx.Exec{}} }
 
 // NewWithRunner returns an ecosystem that runs commands through r, so tests can
 // exercise the applier without a Go toolchain or network.
-func NewWithRunner(r Runner) *Ecosystem { return &Ecosystem{runner: r} }
+func NewWithRunner(r execx.Runner) *Ecosystem { return &Ecosystem{runner: r} }
 
 // Name implements ecosystem.Ecosystem.
 func (*Ecosystem) Name() string { return Name }

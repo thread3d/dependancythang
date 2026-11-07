@@ -13,7 +13,6 @@ import (
 	"github.com/thread3d/dependancythang/internal/app"
 	"github.com/thread3d/dependancythang/internal/config"
 	"github.com/thread3d/dependancythang/internal/ecosystem"
-	"github.com/thread3d/dependancythang/internal/ecosystem/gomod"
 	"github.com/thread3d/dependancythang/internal/planner"
 	"github.com/thread3d/dependancythang/internal/store"
 )
@@ -38,22 +37,22 @@ func (f *fakeRegistry) PublishTime(_ context.Context, _, version string) (string
 
 // fakeApplier rewrites go.mod in the worktree the way `go get` would, without
 // needing a toolchain or network.
-func fakeApplier(recorded *[]gomod.Change) func(context.Context, string, []gomod.Change) (gomod.ApplyResult, error) {
-	return func(_ context.Context, dir string, changes []gomod.Change) (gomod.ApplyResult, error) {
+func fakeApplier(recorded *[]ecosystem.Change) func(context.Context, string, []ecosystem.Change) (ecosystem.ApplyResult, error) {
+	return func(_ context.Context, dir string, changes []ecosystem.Change) (ecosystem.ApplyResult, error) {
 		*recorded = changes
 		path := filepath.Join(dir, "go.mod")
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return gomod.ApplyResult{}, err
+			return ecosystem.ApplyResult{}, err
 		}
 		text := string(data)
 		for _, c := range changes {
 			text = strings.ReplaceAll(text, c.From, c.To)
 		}
 		if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
-			return gomod.ApplyResult{}, err
+			return ecosystem.ApplyResult{}, err
 		}
-		res := gomod.ApplyResult{Observed: map[string][2]string{}, Changed: []string{}}
+		res := ecosystem.ApplyResult{Observed: map[string][2]string{}, Changed: []string{}}
 		for _, c := range changes {
 			res.Observed[c.Name] = [2]string{c.From, c.To}
 			res.Changed = append(res.Changed, c.Name)
@@ -159,7 +158,7 @@ func TestApplyPlanCreatesBranchAndRevertCleansUp(t *testing.T) {
 	svc.Registry = &fakeRegistry{versions: map[string][]ecosystem.Version{
 		module: {{Raw: to, PublishedAt: time.Now().Add(-48 * time.Hour).Format(time.RFC3339)}},
 	}}
-	var applied []gomod.Change
+	var applied []ecosystem.Change
 	svc.Apply = fakeApplier(&applied)
 
 	plan := seedPlan(t, svc, repoPath, module, from, to)
@@ -226,7 +225,7 @@ func TestApplyPlanRefusesStalePlan(t *testing.T) {
 	svc.Registry = &fakeRegistry{versions: map[string][]ecosystem.Version{
 		module: {{Raw: "v1.5.0", PublishedAt: time.Now().Add(-48 * time.Hour).Format(time.RFC3339)}},
 	}}
-	var applied []gomod.Change
+	var applied []ecosystem.Change
 	svc.Apply = fakeApplier(&applied)
 	plan := seedPlan(t, svc, repoPath, module, from, to)
 
@@ -255,7 +254,7 @@ func TestApplyPlanRefusesYankedAndCoolingVersions(t *testing.T) {
 		svc.Registry = &fakeRegistry{versions: map[string][]ecosystem.Version{
 			module: {{Raw: "v1.1.0", Yanked: true, PublishedAt: time.Now().Add(-48 * time.Hour).Format(time.RFC3339)}},
 		}}
-		svc.Apply = fakeApplier(new([]gomod.Change))
+		svc.Apply = fakeApplier(new([]ecosystem.Change))
 		plan := seedPlan(t, svc, repoPath, module, from, "v1.1.0")
 
 		_, err := svc.ApplyPlan(ctx, plan.PlanID, true)
@@ -271,7 +270,7 @@ func TestApplyPlanRefusesYankedAndCoolingVersions(t *testing.T) {
 		svc.Registry = &fakeRegistry{versions: map[string][]ecosystem.Version{
 			module: {{Raw: "v1.1.0", PublishedAt: time.Now().Add(-1 * time.Hour).Format(time.RFC3339)}},
 		}}
-		svc.Apply = fakeApplier(new([]gomod.Change))
+		svc.Apply = fakeApplier(new([]ecosystem.Change))
 		plan := seedPlan(t, svc, repoPath, module, from, "v1.1.0")
 
 		_, err := svc.ApplyPlan(ctx, plan.PlanID, true)
@@ -289,7 +288,7 @@ func TestApplyPlanRequiresConfirmation(t *testing.T) {
 	svc.Registry = &fakeRegistry{versions: map[string][]ecosystem.Version{
 		module: {{Raw: to, PublishedAt: time.Now().Add(-48 * time.Hour).Format(time.RFC3339)}},
 	}}
-	svc.Apply = fakeApplier(new([]gomod.Change))
+	svc.Apply = fakeApplier(new([]ecosystem.Change))
 	plan := seedPlan(t, svc, repoPath, module, from, to)
 
 	_, err := svc.ApplyPlan(ctx, plan.PlanID, false)
@@ -309,7 +308,7 @@ func TestRevertRefusesTerminalRun(t *testing.T) {
 	svc.Registry = &fakeRegistry{versions: map[string][]ecosystem.Version{
 		module: {{Raw: to, PublishedAt: time.Now().Add(-48 * time.Hour).Format(time.RFC3339)}},
 	}}
-	svc.Apply = fakeApplier(new([]gomod.Change))
+	svc.Apply = fakeApplier(new([]ecosystem.Change))
 	plan := seedPlan(t, svc, repoPath, module, from, to)
 
 	run, err := svc.ApplyPlan(ctx, plan.PlanID, true)
@@ -339,7 +338,7 @@ func TestListRuns(t *testing.T) {
 	svc.Registry = &fakeRegistry{versions: map[string][]ecosystem.Version{
 		module: {{Raw: to, PublishedAt: time.Now().Add(-48 * time.Hour).Format(time.RFC3339)}},
 	}}
-	svc.Apply = fakeApplier(new([]gomod.Change))
+	svc.Apply = fakeApplier(new([]ecosystem.Change))
 	plan := seedPlan(t, svc, repoPath, module, from, to)
 
 	if _, err := svc.ApplyPlan(ctx, plan.PlanID, true); err != nil {

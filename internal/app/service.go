@@ -17,7 +17,6 @@ import (
 	"github.com/thread3d/dependancythang/internal/audit"
 	"github.com/thread3d/dependancythang/internal/config"
 	"github.com/thread3d/dependancythang/internal/ecosystem"
-	"github.com/thread3d/dependancythang/internal/ecosystem/gomod"
 	"github.com/thread3d/dependancythang/internal/repolock"
 	"github.com/thread3d/dependancythang/internal/store"
 	"gopkg.in/yaml.v3"
@@ -66,7 +65,7 @@ func CodeOf(err error) string {
 // touch the network or compile anything.
 type Service struct {
 	Registry ecosystem.Registry
-	Apply    func(context.Context, string, []gomod.Change) (gomod.ApplyResult, error)
+	Apply    func(context.Context, string, []ecosystem.Change) (ecosystem.ApplyResult, error)
 	// Sandbox is a seam for verification tests; nil means "resolve from config".
 	Sandbox SandboxFactory
 

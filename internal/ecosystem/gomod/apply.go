@@ -4,62 +4,21 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/thread3d/dependancythang/internal/ecosystem"
 	"golang.org/x/mod/modfile"
 )
-
-// Change is one dependency version bump.
-type Change struct {
-	Name string `json:"name"`
-	From string `json:"from"`
-	To   string `json:"to"`
-}
-
-// ApplyResult reports what actually happened, read back from the toolchain
-// rather than assumed from the request (§8: the lockfile is the truth).
-type ApplyResult struct {
-	// Observed maps a dependency to its version before and after.
-	Observed map[string][2]string `json:"observed,omitempty"`
-	// Changed lists dependencies whose version moved.
-	Changed []string `json:"changed,omitempty"`
-	// Unsplittable is set when the diff is broader than the requested changes,
-	// which happens whenever the package manager resolves transitively.
-	Unsplittable bool `json:"unsplittable,omitempty"`
-	// Commands records what was executed, for the audit log.
-	Commands []string `json:"commands,omitempty"`
-}
-
-// Runner executes an external command in a directory. It exists so tests can
-// exercise the applier without a real Go toolchain or network.
-type Runner interface {
-	Run(ctx context.Context, dir, name string, args ...string) (string, error)
-}
-
-// ExecRunner runs commands with the ambient environment.
-type ExecRunner struct{}
-
-// Run implements Runner.
-func (ExecRunner) Run(ctx context.Context, dir, name string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(out), fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-	}
-	return string(out), nil
-}
 
 // Apply updates a module in dir by delegating to the Go toolchain, then reads
 // the resulting go.mod back so the plan records what really changed.
 //
 // Note what this does *not* do: it never hand-edits go.mod or go.sum. Editing
 // lockfiles by hand is the main source of subtle breakage (§6).
-func (e *Ecosystem) Apply(ctx context.Context, dir string, changes []Change) (ApplyResult, error) {
-	res := ApplyResult{Observed: map[string][2]string{}}
+func (e *Ecosystem) Apply(ctx context.Context, dir string, changes []ecosystem.Change) (ecosystem.ApplyResult, error) {
+	res := ecosystem.ApplyResult{Observed: map[string][2]string{}}
 	if len(changes) == 0 {
 		return res, nil
 	}

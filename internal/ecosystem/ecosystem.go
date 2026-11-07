@@ -33,7 +33,10 @@ type Dependency struct {
 	// Direct is false for indirect (transitive) requirements, which policy
 	// treats differently: reported, but not proposed unless an advisory forces
 	// it (§3 row 9).
-	Direct bool   `json:"direct"`
+	Direct bool `json:"direct"`
+	// Dev marks a development-only requirement (npm devDependencies), which
+	// policy can exclude through allow rules.
+	Dev    bool   `json:"dev,omitempty"`
 	Target string `json:"target"`
 }
 
@@ -43,6 +46,33 @@ type Version struct {
 	PublishedAt string `json:"published_at,omitempty"` // RFC3339, empty if unknown
 	Yanked      bool   `json:"yanked,omitempty"`
 	Retracted   bool   `json:"retracted,omitempty"`
+	// Digest is the secondary identity some ecosystems pin instead of, or as
+	// well as, a tag: a Docker manifest digest or an Action commit SHA.
+	Digest string `json:"digest,omitempty"`
+}
+
+// Change is one requested dependency bump, expressed in ecosystem terms.
+type Change struct {
+	Name string `json:"name"`
+	From string `json:"from"`
+	To   string `json:"to"`
+	// Digest carries a secondary identity for ecosystems that pin one, such as a
+	// Docker image digest or an Action commit SHA.
+	Digest string `json:"digest,omitempty"`
+}
+
+// ApplyResult reports what actually happened, read back from the toolchain rather
+// than assumed from the request (§8: the lockfile is the truth).
+type ApplyResult struct {
+	// Observed maps a dependency to its version before and after.
+	Observed map[string][2]string `json:"observed,omitempty"`
+	// Changed lists dependencies whose version moved.
+	Changed []string `json:"changed,omitempty"`
+	// Unsplittable is set when the diff is broader than requested, which happens
+	// whenever the package manager resolves transitively.
+	Unsplittable bool `json:"unsplittable,omitempty"`
+	// Commands records what was executed, for the audit log.
+	Commands []string `json:"commands,omitempty"`
 }
 
 // UpdateClass is the semver distance between two versions.
@@ -51,11 +81,14 @@ type UpdateClass string
 // Update classes. Unknown is an honest answer for versions that do not parse
 // under the ecosystem's rules.
 const (
-	ClassNone    UpdateClass = "none"
-	ClassPatch   UpdateClass = "patch"
-	ClassMinor   UpdateClass = "minor"
-	ClassMajor   UpdateClass = "major"
-	ClassDigest  UpdateClass = "digest"
+	ClassNone   UpdateClass = "none"
+	ClassPatch  UpdateClass = "patch"
+	ClassMinor  UpdateClass = "minor"
+	ClassMajor  UpdateClass = "major"
+	ClassDigest UpdateClass = "digest"
+	// ClassPin covers ecosystems whose identity is a tag or ref rather than a
+	// version triple: Docker tags, Action refs.
+	ClassPin     UpdateClass = "pin"
 	ClassUnknown UpdateClass = "unknown"
 )
 
@@ -73,6 +106,10 @@ type Ecosystem interface {
 	Classify(from, to string) UpdateClass
 	// VerifyCommands returns the build and test commands Phase B should run.
 	VerifyCommands(t Target) [][]string
+	// Apply rewrites manifests and lockfiles inside dir. It delegates to the
+	// ecosystem's own tool wherever one exists; hand-editing lockfiles is the
+	// main source of subtle breakage (§6).
+	Apply(ctx context.Context, dir string, changes []Change) (ApplyResult, error)
 }
 
 // Registry returns published versions for a module path. It is separate from

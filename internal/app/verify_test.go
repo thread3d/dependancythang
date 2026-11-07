@@ -10,7 +10,6 @@ import (
 
 	"github.com/thread3d/dependancythang/internal/app"
 	"github.com/thread3d/dependancythang/internal/ecosystem"
-	"github.com/thread3d/dependancythang/internal/ecosystem/gomod"
 	"github.com/thread3d/dependancythang/internal/sandbox"
 	"github.com/thread3d/dependancythang/internal/store"
 )
@@ -62,7 +61,7 @@ func applyOneRun(t *testing.T) (*app.Service, store.Run, string) {
 	svc.Registry = &fakeRegistry{versions: map[string][]ecosystem.Version{
 		module: {{Raw: to, PublishedAt: time.Now().Add(-48 * time.Hour).Format(time.RFC3339)}},
 	}}
-	svc.Apply = fakeApplier(new([]gomod.Change))
+	svc.Apply = fakeApplier(new([]ecosystem.Change))
 	plan := seedPlan(t, svc, repoPath, module, from, to)
 
 	run, err := svc.ApplyPlan(context.Background(), plan.PlanID, true)

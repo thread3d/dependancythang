@@ -31,6 +31,10 @@ func (c Cooldown) DaysFor(class ecosystem.UpdateClass) int {
 		return c.MinorDays
 	case ecosystem.ClassMajor:
 		return c.MajorDays
+	case ecosystem.ClassPin, ecosystem.ClassDigest:
+		// A tag or digest move is not a semantic jump; treat it as the smallest
+		// class so a repointed tag is not held for a major's cooldown.
+		return c.PatchDays
 	default:
 		return c.MajorDays
 	}
@@ -80,13 +84,19 @@ type Decision struct {
 	SkipReason string                `json:"skip_reason,omitempty"`
 	Group      string                `json:"group,omitempty"`
 	Direct     bool                  `json:"direct"`
+	// Ecosystem is the name of the ecosystem that owns this dependency, so the
+	// plan can group and apply per ecosystem rather than once per plan.
+	Ecosystem string `json:"ecosystem,omitempty"`
 	// Target identifies which module/manifest the dependency belongs to, so a
 	// monorepo's two go.mod files never collapse into one another.
 	Target      string            `json:"target,omitempty"`
 	Advisories  []string          `json:"advisories,omitempty"`
 	Severity    advisory.Severity `json:"severity,omitempty"`
 	CooldownEnd string            `json:"cooldown_end,omitempty"`
-	Reason      string            `json:"reason,omitempty"` // human note
+	// Digest is the pinned secondary identity chosen for this change, when the
+	// ecosystem has one (Docker digest, Action commit SHA).
+	Digest string `json:"digest,omitempty"`
+	Reason string `json:"reason,omitempty"` // human note
 }
 
 // Skip reasons, stable so callers and tests can assert on them.
@@ -176,6 +186,7 @@ func Decide(in Input, rules Rules) Decision {
 	}
 
 	d.To = target
+	d.Digest = digestOf(in.Candidates, target)
 	d.Class = in.Classify(in.Dep.Current, target)
 	if d.Class == ecosystem.ClassUnknown {
 		d.SkipReason = SkipUnknownClass
@@ -249,6 +260,17 @@ func advisoryFix(current string, advisories []advisory.Advisory, compare func(a,
 		}
 	}
 	return best
+}
+
+// digestOf returns the pinned secondary identity for a version, when the
+// ecosystem has one (Docker digest, Action commit SHA).
+func digestOf(candidates []ecosystem.Version, version string) string {
+	for _, c := range candidates {
+		if c.Raw == version {
+			return c.Digest
+		}
+	}
+	return ""
 }
 
 func publishTime(candidates []ecosystem.Version, version string) string {

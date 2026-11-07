@@ -17,11 +17,12 @@ import (
 
 // Codes from verification (§7).
 const (
-	CodeSandboxUnavailable = "SANDBOX_UNAVAILABLE"
-	CodeVerifyDisabled     = "VERIFY_DISABLED"
-	CodeVerifyFailed       = "VERIFY_FAILED"
-	CodeVerifyTimeout      = "VERIFY_TIMEOUT"
-	CodeWorktreeMissing    = "WORKTREE_MISSING"
+	CodeSandboxUnavailable  = "SANDBOX_UNAVAILABLE"
+	CodeVerifyDisabled      = "VERIFY_DISABLED"
+	CodeVerifyFailed        = "VERIFY_FAILED"
+	CodeVerifyTimeout       = "VERIFY_TIMEOUT"
+	CodeWorktreeMissing     = "WORKTREE_MISSING"
+	CodeVerifyNotApplicable = "VERIFY_NOT_APPLICABLE"
 )
 
 // Phase B environment. Nothing here is inherited from the caller: the sandbox
@@ -120,14 +121,16 @@ func (s *Service) VerifyRun(ctx context.Context, runID string) (store.Run, verif
 		return run, verify.Result{}, coded(CodeSandboxUnavailable, err)
 	}
 
-	eco, err := ecosystemFor("gomod")
+	// Verification builds and tests the *project*, not one ecosystem's target:
+	// a repository whose change was a workflow edit is still verified by its Go
+	// or npm build. Every ecosystem that supplies commands contributes.
+	cmds, err := s.verifyCommands(ctx, run)
 	if err != nil {
 		return run, verify.Result{}, err
 	}
-	raw := eco.VerifyCommands(ecosystemTarget(run.Target))
-	cmds := make([]verify.Command, 0, len(raw))
-	for _, argv := range raw {
-		cmds = append(cmds, verify.Command{Label: strings.Join(argv[1:], " "), Argv: argv})
+	if len(cmds) == 0 {
+		return run, verify.Result{}, coded(CodeVerifyNotApplicable, fmt.Errorf(
+			"no ecosystem in this repository supplies verification commands; the run stays %s", run.Status))
 	}
 
 	lock, err := s.Lock(run.RepoID)
@@ -178,6 +181,41 @@ func (s *Service) VerifyRun(ctx context.Context, runID string) (store.Run, verif
 		return run, result, coded(code, fmt.Errorf("verification did not pass: %s", result.Summary))
 	}
 	return run, result, nil
+}
+
+// verifyCommands collects the build and test commands of every ecosystem that
+// both detects a target in this repository and knows how to verify itself.
+//
+// Verification builds and tests the *project*, not one ecosystem's target: a
+// repository whose change was a workflow edit is still verified by its Go or npm
+// build.
+func (s *Service) verifyCommands(ctx context.Context, run store.Run) ([]verify.Command, error) {
+	_, repoPath, err := s.repoByID(run.RepoID)
+	if err != nil {
+		return nil, err
+	}
+	var cmds []verify.Command
+	seen := map[string]bool{}
+	for _, eco := range allEcosystems() {
+		targets, derr := eco.Detect(ctx, repoPath)
+		if derr != nil || len(targets) == 0 {
+			continue
+		}
+		for _, t := range targets {
+			for _, argv := range eco.VerifyCommands(t) {
+				label := strings.Join(argv, " ")
+				if seen[label] {
+					continue // one run per distinct command is enough
+				}
+				seen[label] = true
+				cmds = append(cmds, verify.Command{Label: label, Argv: argv})
+			}
+		}
+	}
+	if len(cmds) > 8 {
+		cmds = cmds[:8] // keep verification bounded on large monorepos
+	}
+	return cmds, nil
 }
 
 // ecosystemTarget rebuilds a target from a run's stored key such as "gomod:/".

@@ -5,11 +5,11 @@ Dependabot's workflow, with no hosted service. It finds outdated and vulnerable
 dependencies in local repositories, turns them into reviewed update branches, and
 runs the project's build and tests before proposing anything.
 
-**Status: v0.4.0 — M3 verify.** depmcp inventories a repository's Go
-dependencies, finds newer versions and known vulnerabilities, builds a
-policy-filtered plan, applies it on a new git branch, and proves the result by
-building and testing it inside a sandbox before anything is proposed. See
-[CHANGELOG.md](CHANGELOG.md) for exactly what is in and out. Design: [the specification](specs/Local%20Dependency%20Updater%20MCP%20Server%20(Go)%20%E2%80%94%20Specification.md);
+**Status: v0.5.0 — M4 ecosystems.** depmcp inventories a repository's
+dependencies across **Go modules, npm, pnpm, Docker, and GitHub Actions**, finds
+newer versions and known vulnerabilities, builds a policy-filtered plan, applies
+it on a new git branch, and proves the result by building and testing it inside a
+sandbox. See [CHANGELOG.md](CHANGELOG.md) for exactly what is in and out. Design: [the specification](specs/Local%20Dependency%20Updater%20MCP%20Server%20(Go)%20%E2%80%94%20Specification.md);
 verified SDK behaviour: [M-1 spike findings](spike/mcp-probe/FINDINGS.md).
 
 There is no daemon and no listening socket. `depmcp serve` speaks MCP on
@@ -90,6 +90,9 @@ internal/repolock/ per-repository flock (the whole concurrency design)
 internal/audit/    append-only JSONL audit log
 internal/ecosystem/  ecosystem interface + gomod inventory and classification
 internal/registry/   Go module proxy client (cached)
+internal/ecosystem/  gomod, nodejs (npm/pnpm), docker, actions
+internal/tags/       npm registry, Docker Hub, GitHub tag sources
+internal/execx/      command runner shared by every ecosystem
 internal/advisory/   OSV client, normalization, untrusted-text sanitizing
 internal/policy/     ignore/cooldown/indirect/class/grouping rules (pure)
 internal/planner/    immutable, content-addressed update plans

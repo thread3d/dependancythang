@@ -7,12 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/thread3d/dependancythang/internal/config"
 	"github.com/thread3d/dependancythang/internal/ecosystem"
-	"github.com/thread3d/dependancythang/internal/ecosystem/gomod"
 	"github.com/thread3d/dependancythang/internal/gitx"
 	"github.com/thread3d/dependancythang/internal/planner"
 	"github.com/thread3d/dependancythang/internal/store"
@@ -66,13 +66,23 @@ func (s *Service) RevalidatePlan(ctx context.Context, plan planner.Plan) error {
 	if problems := planner.Validate(plan, time.Now()); len(problems) > 0 {
 		return coded(CodePlanStale, fmt.Errorf("plan is not self-consistent: %v", problems))
 	}
-	reg, err := s.registryFor()
-	if err != nil {
-		return err
-	}
 	cooldown := s.cooldownDays()
+	regs := map[string]ecosystem.Registry{}
 
 	for _, g := range plan.Groups {
+		ecoName := g.Ecosystem
+		if ecoName == "" {
+			ecoName = ecosystemOfTarget(g.Target)
+		}
+		reg, ok := regs[ecoName]
+		if !ok {
+			var rerr error
+			reg, rerr = s.registryForEcosystem(ecoName)
+			if rerr != nil {
+				return rerr
+			}
+			regs[ecoName] = reg
+		}
 		for _, c := range g.Changes {
 			versions, verr := reg.Versions(ctx, c.Dependency)
 			if verr != nil {
@@ -232,7 +242,10 @@ func (s *Service) applyIntoWorktree(ctx context.Context, run *store.Run, plan pl
 		run.Detail = reason
 	}
 
-	result, err := s.applier()(ctx, run.Worktree, changesOf(plan))
+	// A plan can span ecosystems (a Dockerfile and a workflow in one repository),
+	// so each group is applied by its own applier rather than one for the whole
+	// plan.
+	result, err := s.applyGroups(ctx, run.Worktree, plan)
 	if err != nil {
 		cleanup(err.Error())
 		return fmt.Errorf("apply to %s: %w", run.Branch, err)
@@ -262,13 +275,17 @@ func (s *Service) applyIntoWorktree(ctx context.Context, run *store.Run, plan pl
 	return nil
 }
 
-// applier returns the configured applier, defaulting to the real Go toolchain.
-func (s *Service) applier() func(context.Context, string, []gomod.Change) (gomod.ApplyResult, error) {
+// applierFor returns the applier for an ecosystem, defaulting to that
+// ecosystem's real implementation.
+func (s *Service) applierFor(name string) (func(context.Context, string, []ecosystem.Change) (ecosystem.ApplyResult, error), error) {
 	if s.Apply != nil {
-		return s.Apply
+		return s.Apply, nil
 	}
-	eco := gomod.New()
-	return eco.Apply
+	eco, err := ecosystemFor(name)
+	if err != nil {
+		return nil, err
+	}
+	return eco.Apply, nil
 }
 
 // branchPrefix resolves the configured branch prefix.
@@ -288,12 +305,54 @@ func firstTarget(p planner.Plan) string {
 	return ""
 }
 
+// applyGroups applies every group with the ecosystem that owns it and merges the
+// results into one report.
+func (s *Service) applyGroups(ctx context.Context, dir string, plan planner.Plan) (ecosystem.ApplyResult, error) {
+	merged := ecosystem.ApplyResult{Observed: map[string][2]string{}}
+	for _, g := range plan.Groups {
+		if len(g.Changes) == 0 {
+			continue
+		}
+		name := g.Ecosystem
+		if name == "" {
+			name = ecosystemOfTarget(g.Target)
+		}
+		apply, err := s.applierFor(name)
+		if err != nil {
+			return merged, err
+		}
+		res, err := apply(ctx, dir, changesOfGroup(g))
+		if err != nil {
+			return merged, err
+		}
+		for k, v := range res.Observed {
+			merged.Observed[k] = v
+		}
+		merged.Changed = append(merged.Changed, res.Changed...)
+		merged.Commands = append(merged.Commands, res.Commands...)
+		if res.Unsplittable {
+			merged.Unsplittable = true
+		}
+	}
+	sort.Strings(merged.Changed)
+	return merged, nil
+}
+
+// changesOfGroup renders one group as applier input.
+func changesOfGroup(g planner.Group) []ecosystem.Change {
+	out := make([]ecosystem.Change, 0, len(g.Changes))
+	for _, c := range g.Changes {
+		out = append(out, ecosystem.Change{Name: c.Dependency, From: c.From, To: c.To, Digest: c.Digest})
+	}
+	return out
+}
+
 // changesOf flattens a plan into the applier's input.
-func changesOf(p planner.Plan) []gomod.Change {
-	var out []gomod.Change
+func changesOf(p planner.Plan) []ecosystem.Change {
+	var out []ecosystem.Change
 	for _, g := range p.Groups {
 		for _, c := range g.Changes {
-			out = append(out, gomod.Change{Name: c.Dependency, From: c.From, To: c.To})
+			out = append(out, ecosystem.Change{Name: c.Dependency, From: c.From, To: c.To, Digest: c.Digest})
 		}
 	}
 	return out
@@ -301,7 +360,7 @@ func changesOf(p planner.Plan) []gomod.Change {
 
 // commitMessage renders a conventional commit listing every change and every
 // advisory id, per §8.
-func commitMessage(p planner.Plan, res gomod.ApplyResult) string {
+func commitMessage(p planner.Plan, res ecosystem.ApplyResult) string {
 	var b strings.Builder
 	switch {
 	case p.TotalChanges == 1:

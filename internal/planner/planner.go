@@ -26,8 +26,10 @@ type Change struct {
 	Class      ecosystem.UpdateClass `json:"class"`
 	Direct     bool                  `json:"direct"`
 	Target     string                `json:"target,omitempty"`
-	Advisories []string              `json:"advisories,omitempty"`
-	Severity   advisory.Severity     `json:"severity,omitempty"`
+	// Digest carries a pinned secondary identity (image digest, commit SHA).
+	Digest     string            `json:"digest,omitempty"`
+	Advisories []string          `json:"advisories,omitempty"`
+	Severity   advisory.Severity `json:"severity,omitempty"`
 }
 
 // Deferred is a change policy declined to make now, with the reason.
@@ -98,7 +100,11 @@ func Build(decisions []policy.Decision, ecosystemName, repoID string, now time.T
 		key := d.Target + "|" + name
 		g, ok := groups[key]
 		if !ok {
-			g = &Group{Name: name, Ecosystem: ecosystemName, Target: d.Target}
+			eco := d.Ecosystem
+			if eco == "" {
+				eco = ecosystemName
+			}
+			g = &Group{Name: name, Ecosystem: eco, Target: d.Target}
 			groups[key] = g
 		}
 		g.Changes = append(g.Changes, Change{
@@ -108,6 +114,7 @@ func Build(decisions []policy.Decision, ecosystemName, repoID string, now time.T
 			Class:      d.Class,
 			Direct:     d.Direct,
 			Target:     d.Target,
+			Digest:     d.Digest,
 			Advisories: d.Advisories,
 			Severity:   d.Severity,
 		})
