@@ -80,7 +80,47 @@ func (s *Store) LoadInventory(ctx context.Context, repoID, target string) ([]Dep
 	return out, scanned, rows.Err()
 }
 
-// SaveAuditless is unused; kept out deliberately.
+// RecordRunOutcome updates the scheduler's memory of a repository: consecutive
+// failures are what make a repeatedly failing repository pause and report (§12).
+func (s *Store) RecordRunOutcome(ctx context.Context, repoID string, ok bool, detail string) (int, error) {
+	now := time.Now().Unix()
+	if ok {
+		_, err := s.db.ExecContext(ctx, `
+			UPDATE repo_state
+			SET consecutive_failures=0, last_error='', last_scan_at=?, last_run_at=?, updated_at=?
+			WHERE repo_id=?`, now, now, now, repoID)
+		if err != nil {
+			return 0, fmt.Errorf("record success for %s: %w", repoID, err)
+		}
+		return 0, nil
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE repo_state
+		SET consecutive_failures=consecutive_failures+1, last_error=?, last_run_at=?, updated_at=?
+		WHERE repo_id=?`, detail, now, now, repoID); err != nil {
+		return 0, fmt.Errorf("record failure for %s: %w", repoID, err)
+	}
+	var count int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT consecutive_failures FROM repo_state WHERE repo_id=?`, repoID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("read failure count for %s: %w", repoID, err)
+	}
+	return count, nil
+}
+
+// FailureCount reports how many runs have failed in a row.
+func (s *Store) FailureCount(ctx context.Context, repoID string) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT consecutive_failures FROM repo_state WHERE repo_id=?`, repoID).Scan(&count)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read failure count for %s: %w", repoID, err)
+	}
+	return count, nil
+}
 
 // SavePlan persists an immutable plan.
 func (s *Store) SavePlan(ctx context.Context, planID, repoID, target, ecosystem string, createdAt time.Time, planJSON []byte) error {

@@ -21,7 +21,7 @@ import (
 
 // SchemaVersion is the newest migration this binary knows. A database stamped
 // with a higher number refuses to open, rather than being silently downgraded.
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 // migrations are applied in order; index 0 brings a fresh database to version 1.
 // They are forward-only by design.
@@ -114,6 +114,14 @@ ALTER TABLE runs ADD COLUMN verify_status TEXT NOT NULL DEFAULT '';
 ALTER TABLE runs ADD COLUMN verify_summary TEXT NOT NULL DEFAULT '';
 ALTER TABLE runs ADD COLUMN verify_sandbox TEXT NOT NULL DEFAULT '';
 ALTER TABLE runs ADD COLUMN verified_at INTEGER NOT NULL DEFAULT 0;
+`,
+
+	// Migration 5: unattended scheduling. A daemon would keep failure state in
+	// memory; without one, it has to live in the database (§12).
+	`
+ALTER TABLE repo_state ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE repo_state ADD COLUMN last_error TEXT NOT NULL DEFAULT '';
+ALTER TABLE repo_state ADD COLUMN last_run_at INTEGER NOT NULL DEFAULT 0;
 `,
 }
 

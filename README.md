@@ -5,11 +5,12 @@ Dependabot's workflow, with no hosted service. It finds outdated and vulnerable
 dependencies in local repositories, turns them into reviewed update branches, and
 runs the project's build and tests before proposing anything.
 
-**Status: v0.5.0 — M4 ecosystems.** depmcp inventories a repository's
+**Status: v0.6.0 — M5 scheduling.** depmcp inventories a repository's
 dependencies across **Go modules, npm, pnpm, Docker, and GitHub Actions**, finds
 newer versions and known vulnerabilities, builds a policy-filtered plan, applies
 it on a new git branch, and proves the result by building and testing it inside a
-sandbox. See [CHANGELOG.md](CHANGELOG.md) for exactly what is in and out. Design: [the specification](specs/Local%20Dependency%20Updater%20MCP%20Server%20(Go)%20%E2%80%94%20Specification.md);
+sandbox — then runs on a timer with no daemon and no server. See
+[CHANGELOG.md](CHANGELOG.md) for exactly what is in and out. Design: [the specification](specs/Local%20Dependency%20Updater%20MCP%20Server%20(Go)%20%E2%80%94%20Specification.md);
 verified SDK behaviour: [M-1 spike findings](spike/mcp-probe/FINDINGS.md).
 
 There is no daemon and no listening socket. `depmcp serve` speaks MCP on
@@ -40,6 +41,10 @@ depmcp apply <plan-id> --confirm   # apply on a new branch (worktree)
 depmcp verify <run-id>     # build and test that branch in a sandbox
 depmcp runs                # recent runs
 depmcp revert <run-id>     # delete a run's branch and worktree
+depmcp run --repo ~/src/project        # one-shot: plan → apply → verify → notify
+depmcp schedule install --repo ~/src/project
+depmcp schedule print --repo ~/src/project --kind cron
+depmcp resume --repo ~/src/project     # clear a suspended repository
 depmcp doctor              # environment checks
 depmcp add ~/src/project   # track a git repository (writes YAML)
 depmcp list                # tracked repositories, JSON
@@ -99,6 +104,8 @@ internal/planner/    immutable, content-addressed update plans
 internal/gitx/       git worktrees, branches, commits (shells out to git)
 internal/sandbox/    bubblewrap and unconfined runners (Phase B isolation)
 internal/verify/     build/test orchestration and verdicts
+internal/schedule/   systemd/launchd/cron artifact generation
+internal/notify/     file, desktop, and ntfy notification channels
 internal/httpcache/  shared on-disk HTTP cache with ETags
 spike/mcp-probe/   throwaway SDK capability probe from M-1
 specs/             the specification

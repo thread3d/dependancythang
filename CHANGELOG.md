@@ -7,8 +7,55 @@ milestones in [the specification](specs/Local%20Dependency%20Updater%20MCP%20Ser
 ## [Unreleased]
 
 ### Planned
-- M5: scheduling without a daemon — one-shot `run`, systemd/launchd/cron unit
-  generation, notifications, failure counting.
+- M6: forges — GitHub, GitLab, and Gitea PRs, `dependabot.yml` import, the four
+  prompts, and documentation.
+
+## [0.6.0] — 2026-11-07
+
+The M5 milestone: depmcp runs on its own, with no daemon and no MCP server in the
+loop.
+
+### Added
+- **`depmcp run`** — the one-shot scheduled job: plan, apply, verify, notify. It
+  stops before opening a pull request unless `auto_pr` is set, because an
+  unattended run should not speak to a remote on its own.
+- **`depmcp schedule install|print`** generating real OS artifacts instead of a
+  goroutine: a systemd user service plus timer (`OnCalendar`, `Persistent=true`
+  so a missed slot fires once on wake, `RandomizedDelaySec=10m` so every
+  repository does not hit registries at :00), a launchd plist, or a crontab line.
+  Cron expressions are refused as `OnCalendar` and routed to the cron artifact.
+- **The systemd PATH trap is handled explicitly**: units bake in an
+  `Environment=PATH` that includes `~/.local/share/pnpm/bin`, `~/.local/bin`, and
+  `~/go/bin`, because a timer does not read a shell profile.
+- **Notifications**: a durable JSONL log always written (a headless box has no
+  popup), plus `notify-send` and ntfy when configured. A failed notification
+  never fails the run.
+- **Failure memory without a daemon**: consecutive failures live in the database,
+  three suspends the repository, and `depmcp resume` clears the count. `status`
+  reports the count and whether a repository is suspended.
+- **Worktree supersede**: a day-scoped branch already checked out by an earlier
+  run is replaced instead of colliding, which is what a retry or a double-firing
+  timer produces.
+
+### Fixed
+- Generated units passed a `--config` flag that the `run` command does not
+  accept; configuration and state travel as environment variables, which the unit
+  already set.
+
+### Verified
+A one-shot `depmcp run` with no MCP server and no daemon produced a verified
+branch (`[go build ./... go test ./...] passed` in the sandbox) and wrote exactly
+one notification. Three failing runs incremented the counter to 3 and suspended
+the repository; a fourth refused with `REPO_SUSPENDED`; `depmcp resume` cleared
+it, after which a clean run verified again. Only one branch per day existed
+throughout, because later runs supersede earlier ones.
+
+### Known limitations
+- `auto_pr` is accepted but has no forge to talk to yet (M6).
+- Timer artifacts are generated and installed, not enabled: enabling is left to
+  the user, who sees the exact `systemctl` command.
+- Only the file, desktop, and ntfy channels exist; no webhook payload shape has
+  been designed.
 
 ## [0.5.0] — 2026-11-07
 

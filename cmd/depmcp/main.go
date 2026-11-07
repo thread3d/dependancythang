@@ -19,6 +19,7 @@ import (
 	"github.com/thread3d/dependancythang/internal/app"
 	"github.com/thread3d/dependancythang/internal/config"
 	"github.com/thread3d/dependancythang/internal/mcpserver"
+	"github.com/thread3d/dependancythang/internal/schedule"
 	"github.com/thread3d/dependancythang/internal/store"
 	"github.com/thread3d/dependancythang/internal/version"
 )
@@ -40,6 +41,12 @@ Usage:
   depmcp verify <run-id>     Build and test a run's branch in the sandbox
   depmcp revert <run-id>     Delete a run's branch and worktree
   depmcp runs [repo]         Recent apply runs
+  depmcp run --repo <repo>   One-shot scheduled run: plan, apply, verify, notify
+  depmcp schedule install --repo <repo> [--kind systemd|launchd|cron]
+                             Write the timer/agent that runs depmcp run
+  depmcp schedule print --repo <repo> [--kind ...]
+                             Print the artifact instead of writing it
+  depmcp resume --repo <repo> Clear a repository's failure count
   depmcp doctor              Check the environment
   depmcp status              Show state directory and database statistics
   depmcp validate [file]     Validate a configuration file (default: the global one)
@@ -84,6 +91,12 @@ func main() {
 		err = runRevert(ctx, os.Args[2:])
 	case "runs":
 		err = runRuns(ctx, os.Args[2:])
+	case "run":
+		err = runOneShot(ctx, os.Args[2:])
+	case "schedule":
+		err = runSchedule(ctx, os.Args[2:])
+	case "resume":
+		err = runResume(ctx, os.Args[2:])
 	case "doctor":
 		err = runDoctor(ctx)
 	case "status":
@@ -450,6 +463,108 @@ func runRuns(ctx context.Context, args []string) error {
 		return err
 	}
 	return emitJSON(map[string]any{"runs": runs, "total": len(runs)})
+}
+
+func runOneShot(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("run", flag.ExitOnError)
+	repo := fs.String("repo", "", "repository id or path")
+	autoPR := fs.Bool("auto-pr", false, "open a pull request when verification passes")
+	if err := parseAnyOrder(fs, args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*repo) == "" {
+		return errors.New("run requires --repo")
+	}
+	svc, err := app.Open(ctx)
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+
+	outcome, err := svc.RunOnce(ctx, *repo, app.RunOptions{AutoPR: *autoPR})
+	if err != nil && outcome.Summary == "" {
+		return err
+	}
+	if emitErr := emitJSON(outcome); emitErr != nil {
+		return emitErr
+	}
+	// A failed or suspended run exits non-zero so a timer's journal shows it,
+	// but the outcome has already been reported.
+	if outcome.Suspended || (outcome.Run != nil && outcome.Run.Status != "verified") || err != nil {
+		return errors.New("run did not complete successfully")
+	}
+	return nil
+}
+
+func runSchedule(ctx context.Context, args []string) error {
+	if len(args) == 0 {
+		return errors.New("schedule requires a subcommand: install or print")
+	}
+	sub := args[0]
+	fs := flag.NewFlagSet("schedule "+sub, flag.ExitOnError)
+	repo := fs.String("repo", "", "repository id or path")
+	kind := fs.String("kind", "systemd", "systemd | launchd | cron")
+	if err := parseAnyOrder(fs, args[1:]); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*repo) == "" {
+		return errors.New("schedule requires --repo")
+	}
+	svc, err := app.Open(ctx)
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+
+	switch sub {
+	case "install":
+		written, hint, err := svc.InstallSchedule(*repo, schedule.Kind(*kind))
+		if err != nil {
+			return err
+		}
+		return emitJSON(map[string]any{
+			"written": written, "kind": *kind, "activate": hint,
+		})
+	case "print":
+		artifacts, _, err := svc.ScheduleArtifacts(*repo, schedule.Kind(*kind))
+		if err != nil {
+			return err
+		}
+		if *kind == "cron" {
+			for _, a := range artifacts {
+				fmt.Print(a.Body)
+			}
+			return nil
+		}
+		for _, a := range artifacts {
+			fmt.Printf("# --- %s ---\n%s", a.Name, a.Body)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown schedule subcommand %q", sub)
+	}
+}
+
+func runResume(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("resume", flag.ExitOnError)
+	repo := fs.String("repo", "", "repository id or path")
+	if err := parseAnyOrder(fs, args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*repo) == "" {
+		return errors.New("resume requires --repo")
+	}
+	svc, err := app.Open(ctx)
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+
+	count, err := svc.Resume(ctx, *repo)
+	if err != nil {
+		return err
+	}
+	return emitJSON(map[string]any{"repository": *repo, "consecutive_failures": count})
 }
 
 func emitJSON(v any) error {

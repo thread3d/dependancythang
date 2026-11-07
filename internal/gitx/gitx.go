@@ -77,6 +77,29 @@ func (r Repo) WorktreeRemove(ctx context.Context, path string) error {
 	return err
 }
 
+// WorktreeForBranch returns the path of the worktree that has branch checked
+// out, or "" when none does. A day-scoped branch name means two runs on the same
+// day would otherwise collide with the first run's worktree.
+func (r Repo) WorktreeForBranch(ctx context.Context, branch string) (string, error) {
+	out, err := r.run(ctx, "worktree", "list", "--porcelain")
+	if err != nil {
+		return "", err
+	}
+	var current string
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			current = strings.TrimPrefix(line, "worktree ")
+		case strings.HasPrefix(line, "branch "):
+			ref := strings.TrimPrefix(line, "branch ")
+			if ref == "refs/heads/"+branch {
+				return current, nil
+			}
+		}
+	}
+	return "", nil
+}
+
 // WorktreePrune removes administrative files for worktrees that are gone.
 func (r Repo) WorktreePrune(ctx context.Context) error {
 	_, err := r.run(ctx, "worktree", "prune")

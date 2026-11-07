@@ -17,6 +17,7 @@ import (
 	"github.com/thread3d/dependancythang/internal/audit"
 	"github.com/thread3d/dependancythang/internal/config"
 	"github.com/thread3d/dependancythang/internal/ecosystem"
+	"github.com/thread3d/dependancythang/internal/notify"
 	"github.com/thread3d/dependancythang/internal/repolock"
 	"github.com/thread3d/dependancythang/internal/store"
 	"gopkg.in/yaml.v3"
@@ -68,6 +69,8 @@ type Service struct {
 	Apply    func(context.Context, string, []ecosystem.Change) (ecosystem.ApplyResult, error)
 	// Sandbox is a seam for verification tests; nil means "resolve from config".
 	Sandbox SandboxFactory
+	// Notifier is a seam for scheduled-run tests; nil means "build from config".
+	Notifier notify.Notifier
 
 	ConfigPath string
 	Cfg        *config.Config

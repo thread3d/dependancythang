@@ -232,6 +232,14 @@ func (s *Service) applyIntoWorktree(ctx context.Context, run *store.Run, plan pl
 		baseRef = remote + "/" + branch
 	}
 
+	// A day-scoped branch name can already be checked out by an earlier run (a
+	// retry, or a schedule firing twice). Supersede it rather than failing: §8
+	// says a newer run replaces the older branch for the same package.
+	if stale, werr := base.WorktreeForBranch(ctx, run.Branch); werr == nil && stale != "" {
+		_ = base.WorktreeRemove(ctx, stale)
+		_ = base.WorktreePrune(ctx)
+	}
+
 	if err := base.WorktreeAdd(ctx, run.Worktree, run.Branch, baseRef); err != nil {
 		return coded(CodeGitFailed, err)
 	}
