@@ -163,3 +163,104 @@ func (g *GitHub) Tags(ctx context.Context, repo string) ([]ecosystem.Version, er
 	}
 	return out, nil
 }
+
+// PyPI reads the PyPI JSON API, which returns every release with its upload time.
+type PyPI struct {
+	Base string
+	HTTP *httpcache.Client
+}
+
+// NewPyPI builds a PyPI tag source.
+func NewPyPI(cacheDir string, offline bool) (*PyPI, error) {
+	hc, err := httpcache.NewClient(cacheDir, offline)
+	if err != nil {
+		return nil, err
+	}
+	return &PyPI{Base: "https://pypi.org", HTTP: hc}, nil
+}
+
+// Name implements Source.
+func (p *PyPI) Name() string { return "pypi" }
+
+// Tags implements Source.
+func (p *PyPI) Tags(ctx context.Context, pkg string) ([]ecosystem.Version, error) {
+	endpoint := strings.TrimSuffix(p.Base, "/") + "/pypi/" + url.PathEscape(pkg) + "/json"
+	body, err := p.HTTP.Get(ctx, endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("pypi %s: %w", pkg, err)
+	}
+	var doc struct {
+		Releases map[string][]struct {
+			UploadTime string `json:"upload_time_iso_8601"`
+		} `json:"releases"`
+	}
+	if err := json.Unmarshal([]byte(body), &doc); err != nil {
+		return nil, fmt.Errorf("decode pypi %s: %w", pkg, err)
+	}
+	out := make([]ecosystem.Version, 0, len(doc.Releases))
+	for version, files := range doc.Releases {
+		if version == "" {
+			continue
+		}
+		published := ""
+		if len(files) > 0 {
+			published = files[0].UploadTime
+		}
+		// A yanked release has no files at all.
+		out = append(out, ecosystem.Version{Raw: version, PublishedAt: published, Yanked: len(files) == 0})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("pypi %s: no releases published", pkg)
+	}
+	ecosystem.SortDescending(out, semverx.Compare)
+	return out, nil
+}
+
+// Crates reads crates.io, which paginates versions separately from the crate.
+type Crates struct {
+	Base string
+	HTTP *httpcache.Client
+}
+
+// NewCrates builds a crates.io tag source.
+func NewCrates(cacheDir string, offline bool) (*Crates, error) {
+	hc, err := httpcache.NewClient(cacheDir, offline)
+	if err != nil {
+		return nil, err
+	}
+	return &Crates{Base: "https://crates.io", HTTP: hc}, nil
+}
+
+// Name implements Source.
+func (c *Crates) Name() string { return "crates" }
+
+// Tags implements Source.
+func (c *Crates) Tags(ctx context.Context, crate string) ([]ecosystem.Version, error) {
+	endpoint := strings.TrimSuffix(c.Base, "/") + "/api/v1/crates/" + url.PathEscape(crate) + "/versions"
+	body, err := c.HTTP.Get(ctx, endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("crates.io %s: %w", crate, err)
+	}
+	var doc struct {
+		Versions []struct {
+			Num       string `json:"num"`
+			Yanked    bool   `json:"yanked"`
+			CreatedAt string `json:"created_at"`
+		} `json:"versions"`
+	}
+	if err := json.Unmarshal([]byte(body), &doc); err != nil {
+		return nil, fmt.Errorf("decode crates.io %s: %w", crate, err)
+	}
+	out := make([]ecosystem.Version, 0, len(doc.Versions))
+	for _, v := range doc.Versions {
+		if v.Num == "" {
+			continue
+		}
+		out = append(out, ecosystem.Version{Raw: v.Num, PublishedAt: v.CreatedAt, Yanked: v.Yanked})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("crates.io %s: no versions published", crate)
+	}
+	ecosystem.SortDescending(out, semverx.Compare)
+	return out, nil
+}

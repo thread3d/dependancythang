@@ -7,7 +7,47 @@ milestones in [the specification](specs/Local%20Dependency%20Updater%20MCP%20Ser
 ## [Unreleased]
 
 ### Planned
-- M7: v2 breadth — pip/uv/poetry, Cargo, and yarn.
+- Nothing scheduled. The specification's v1 and v2 ecosystems are implemented.
+
+## [0.9.0] — 2026-11-07
+
+M7: the v2 breadth ecosystems — Python, Cargo, and yarn.
+
+### Added
+- **Python** (`pip`/`uv`/`poetry`): reads `requirements*.txt` and
+  `pyproject.toml`, understanding both PEP 621 dependency arrays and poetry's
+  table form. Only an exact `==` pin yields a current version — a range yields
+  none, because inventing one would be a lie. Applying rewrites a `==` pin in a
+  requirements file directly (that file is a manifest, not a lock) and delegates
+  pyproject projects to the tool the repository actually uses (`uv` if `uv.lock`
+  is present, `poetry` if `poetry.lock`, otherwise pip).
+- **Cargo**: reads `Cargo.toml` and resolves current versions through
+  `Cargo.lock`, ignoring the package's own `version` field. Applying delegates to
+  `cargo update -p <crate> --precise <version>`, because the lockfile is cargo's
+  to write.
+- **yarn v1**: reads `yarn.lock` entries, including multi-range headers. A yarn
+  berry lockfile is refused rather than misread, and a project carrying
+  `package-lock.json` or `pnpm-lock.yaml` is left to that manager.
+- **PyPI and crates.io tag sources**, joining npm, Docker Hub, and GitHub in the
+  shared ETag cache. A PyPI release with no files is treated as yanked.
+- All seven ecosystems are detected, inventoried, planned, applied, and verified
+  through the same interface, with no per-ecosystem branching in the write path.
+
+### Fixed
+- Poetry's dependency tables were not parsed at all, so a poetry project
+  inventoried nothing.
+- A range constraint was briefly handed to `pip install`, which would have
+  installed packages for a constraint depmcp had deliberately left alone. A
+  requirements file is now edited and never delegated.
+
+### Known limitations
+- Python, Cargo, and yarn apply steps shell out to the real tools; the tests cover
+  the manifest rewriting and the command contract with a fake runner, not a live
+  toolchain run.
+- yarn berry is out of scope by design, and yarn detection is lockfile-based, so it
+  finds resolved packages rather than declared ones.
+- Python verification assumes pytest is present; there is no per-project test
+  discovery yet.
 
 ## [0.8.0] — 2026-11-07
 

@@ -5,8 +5,9 @@ Dependabot's workflow, with no hosted service. It finds outdated and vulnerable
 dependencies in local repositories, turns them into reviewed update branches, and
 runs the project's build and tests before proposing anything.
 
-**Status: v0.8.0 — keyring + M6 forges.** depmcp inventories a repository's
-dependencies across **Go modules, npm, pnpm, Docker, and GitHub Actions**, finds
+**Status: v0.9.0 — complete.** depmcp inventories a repository's
+dependencies across **Go modules, npm, pnpm, yarn v1, Docker, GitHub Actions,
+Python (pip/uv/poetry), and Cargo**, finds
 newer versions and known vulnerabilities, builds a policy-filtered plan, applies
 it on a new git branch, and proves the result by building and testing it inside a
 sandbox — then runs on a timer with no daemon and no server, and can open pull
@@ -113,7 +114,7 @@ internal/repolock/ per-repository flock (the whole concurrency design)
 internal/audit/    append-only JSONL audit log
 internal/ecosystem/  ecosystem interface + gomod inventory and classification
 internal/registry/   Go module proxy client (cached)
-internal/ecosystem/  gomod, nodejs (npm/pnpm), docker, actions
+internal/ecosystem/  gomod, nodejs (npm/pnpm), docker, actions, v2eco (pip/cargo/yarn)
 internal/tags/       npm registry, Docker Hub, GitHub tag sources
 internal/execx/      command runner shared by every ecosystem
 internal/advisory/   OSV client, normalization, untrusted-text sanitizing
