@@ -4,7 +4,18 @@ Generated from `issues.jsonl` and `resolved.jsonl`; do not edit by hand.
 Read the open entries, fix them, then record a resolution with `depmcp faults resolve <id>`.
 A fault seen again after its resolution reopens automatically.
 
-0 open, 7 resolved.
+1 open, 7 resolved.
+
+## DEP-D516B032 — the actions applier rewrites any ref, so a plan built from the working tree can be applied to a different base and the commit states the wrong from-version
+
+- kind: `friction` · severity: `note` · seen 1 time(s)
+- first: 2026-11-08T12:54:13.524752813Z · last: 2026-11-08T12:54:13.524752813Z
+- command: `faults add`
+- **fix:** Either make the actions applier honour Change.From and report the lines it actually changed, or build the plan from the same fetched default branch apply will use, so Observed and the commit message describe the diff that was really produced.
+
+```
+Verification of the PLAN_STALE fix: the plan was built from a working tree where both workflows pinned actions/checkout@v4, while the clone's default branch still had @v7. Apply based the run on the default branch, the applier matched the action by name and rewrote the v7 lines to the v7.0.1 SHA, and the commit message read 'actions/checkout v4 -> v7.0.1 (major)' with Observed reporting v7 as the from-version. The rewritten file is a correct hardened pin, but the record of it is wrong.
+```
 
 ## Resolved
 
