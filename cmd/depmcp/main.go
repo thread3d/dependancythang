@@ -22,6 +22,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/thread3d/dependancythang/internal/app"
 	"github.com/thread3d/dependancythang/internal/config"
+	"github.com/thread3d/dependancythang/internal/faults"
 	"github.com/thread3d/dependancythang/internal/mcpserver"
 	"github.com/thread3d/dependancythang/internal/schedule"
 	"github.com/thread3d/dependancythang/internal/secrets"
@@ -58,6 +59,12 @@ Usage:
   depmcp secret set <forge>  Store a forge token in the OS keyring (reads stdin)
   depmcp secret delete <forge>
   depmcp secret check        Report whether the keyring is usable
+  depmcp faults [--repo X] [--all]
+                             List defects depmcp recorded against itself
+  depmcp faults add "<summary>" --kind K --hint H [--detail D]
+                             Record a defect or a note for a later session
+  depmcp faults resolve <id> --note "..."
+                             Record that a fault was fixed
   depmcp doctor              Check the environment
   depmcp status              Show state directory and database statistics
   depmcp validate [file]     Validate a configuration file (default: the global one)
@@ -114,6 +121,8 @@ func main() {
 		err = runImportDependabot(ctx, os.Args[2:])
 	case "secret":
 		err = runSecret(ctx, os.Args[2:])
+	case "faults":
+		err = runFaults(ctx, os.Args[2:])
 	case "doctor":
 		err = runDoctor(ctx)
 	case "status":
@@ -679,6 +688,79 @@ func readSecret(r *os.File) (string, error) {
 		return "", err
 	}
 	return strings.TrimRight(line, "\r\n"), nil
+}
+
+// runFaults reads and writes depmcp's own defect backlog.
+func runFaults(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("faults", flag.ExitOnError)
+	repo := fs.String("repo", "", "repository id or path whose .depmcp/faults to use")
+	all := fs.Bool("all", false, "include resolved entries")
+	kind := fs.String("kind", string(faults.KindFriction), "internal-error | tool-failure | capability-gap | environment | friction")
+	hint := fs.String("hint", "", "what a later session should do about it")
+	detail := fs.String("detail", "", "the full text of the occurrence")
+	note := fs.String("note", "", "what fixed it (resolve only)")
+
+	rest := args
+	if len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
+		sub := rest[0]
+		rest = rest[1:]
+		if err := parseAnyOrder(fs, rest); err != nil {
+			return err
+		}
+		svc, err := app.Open(ctx)
+		if err != nil {
+			return err
+		}
+		defer svc.Close()
+
+		switch sub {
+		case "add":
+			if fs.NArg() != 1 {
+				return errors.New("faults add requires a one-line summary")
+			}
+			f, err := svc.RecordFault(ctx, *repo, faults.Fault{
+				Kind: faults.Kind(*kind), Summary: fs.Arg(0),
+				Detail: *detail, Hint: *hint, Command: "faults add",
+			})
+			if err != nil {
+				return err
+			}
+			return emitJSON(f)
+		case "resolve":
+			if fs.NArg() != 1 {
+				return errors.New("faults resolve requires a fault id, e.g. DEP-1A2B3C4D")
+			}
+			if err := svc.ResolveFault(ctx, *repo, fs.Arg(0), *note); err != nil {
+				return err
+			}
+			return emitJSON(map[string]any{"resolved": true, "fault_id": fs.Arg(0)})
+		default:
+			return fmt.Errorf("unknown faults subcommand %q (add, resolve)", sub)
+		}
+	}
+
+	if err := parseAnyOrder(fs, args); err != nil {
+		return err
+	}
+	svc, err := app.Open(ctx)
+	if err != nil {
+		return err
+	}
+	defer svc.Close()
+
+	entries, dir, err := svc.ListFaults(ctx, *repo, *all)
+	if err != nil {
+		return err
+	}
+	open := 0
+	for _, e := range entries {
+		if !e.Resolved {
+			open++
+		}
+	}
+	return emitJSON(map[string]any{
+		"journal": dir, "open": open, "total": len(entries), "faults": entries,
+	})
 }
 
 func emitJSON(v any) error {

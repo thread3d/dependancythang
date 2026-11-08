@@ -47,6 +47,61 @@ A bug depmcp found in itself while being dogfooded as an MCP server.
 ## [Unreleased]
 
 ### Planned
+- Clear the open backlog in `.depmcp/faults/FAULTS.md`.
+
+## [0.10.0] — 2026-11-08
+
+depmcp now keeps a journal of the defects it finds in itself, so the session that
+finds one is not required to be the session that fixes it.
+
+### Added
+- **`internal/faults`** — an append-only self-defect journal at
+  `<repo>/.depmcp/faults/`, holding `issues.jsonl` (one row per occurrence, the
+  source of truth), `resolved.jsonl` (resolution events), and a regenerated
+  `FAULTS.md` digest. Three properties are copied deliberately from CodeWitness
+  and jCheck, which solve this problem already:
+  - **the journal outlives the run** — it lives in the repository, not in a run
+    directory, so cleaning runs never erases the backlog;
+  - **an id is a fingerprint, not a counter** — `DEP-XXXXXXXX` hashes kind plus a
+    signature, so one defect seen a hundred times is one entry with a count. The
+    detail text is excluded from the hash because it carries run ids and temporary
+    paths that change on every occurrence;
+  - **a resolution is an event, not a deletion** — a fault seen again after its
+    resolution reopens, which is what a regression should look like.
+- **A `hint` on every entry**, following jCheck: the field that makes the backlog
+  actionable by a later context rather than merely observational.
+- **Three MCP tools** — `list_faults`, `record_fault`, `resolve_fault` — bringing
+  the surface to the specification's target of 22. Plus `depmcp faults`,
+  `depmcp faults add`, and `depmcp faults resolve`.
+- **Automatic recording at the tool boundary.** `wrap()` already saw every tool
+  failure; it now files a fault when the error carries **no stable code**. The code
+  set is the taxonomy of things that are supposed to go wrong, so an uncoded
+  error means the code took a path nobody planned for.
+
+### Design notes
+- Recording is best effort by contract: a failure to log a defect must never
+  replace or mask the defect. `Record` returns an error that every caller ignores.
+- Timestamps are nanosecond-precision. Second precision cannot order an
+  occurrence and its resolution when both land in the same second — which is
+  exactly when a regression gets recorded.
+- A corrupt line in the JSONL is skipped rather than fatal, so a bad hand-edit
+  cannot hide the rest of the backlog.
+
+### Seeded backlog
+The journal ships with the four open defects this project's own dogfooding found,
+each with a fix hint, plus one resolved entry demonstrating the model:
+
+| id | kind | defect |
+| --- | --- | --- |
+| `DEP-A569750B` | tool-failure | no panic recovery at MCP tool boundaries |
+| `DEP-B8A77617` | capability-gap | advisory targets lose their `v` prefix |
+| `DEP-9DE3A533` | capability-gap | scheduled runs ignore `auto_pr` |
+| `DEP-9D45551D` | capability-gap | yarn berry refused rather than supported |
+| `DEP-435CC37F` | resolved | OSV fixed versions without a `v` prefix were dropped — fixed in v0.9.2 |
+
+## [Unreleased]
+
+### Planned
 - Nothing scheduled. The specification's v1 and v2 ecosystems are implemented.
 
 ## [0.9.0] — 2026-11-07

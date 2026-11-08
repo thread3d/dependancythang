@@ -32,6 +32,7 @@ func New(svc *app.Service) *mcp.Server {
 	registerReadTools(s, svc)
 	registerWriteTools(s, svc)
 	registerForgeTools(s, svc)
+	registerFaultTools(s, svc)
 	registerPrompts(s)
 	return s
 }
@@ -232,12 +233,20 @@ func ptr[T any](v T) *T { return &v }
 
 // wrap records the failure and returns an error carrying the stable code, which
 // the SDK renders as an isError tool result (§7).
+//
+// It is also where depmcp notices its own defects: an error with no stable code
+// means the code took a path nobody planned for, so it goes into the repository's
+// fault backlog for a later session to fix.
 func wrap(svc *app.Service, tool string, args map[string]any, err error) error {
 	if err == nil {
 		return nil
 	}
 	code := app.CodeOf(err)
 	_ = svc.RecordTool(context.Background(), tool, args, err, code)
+	if code == "" {
+		repo, _ := args["repository"].(string)
+		svc.RecordUnexpectedError(context.Background(), tool, repo, err)
+	}
 	if code == "" {
 		return err
 	}

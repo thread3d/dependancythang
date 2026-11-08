@@ -232,7 +232,7 @@ Docker and Actions implement `TagSource` with a heuristic tag order (`1.2-alpine
 
 ## 7. MCP surface
 
-The server exposes **22 tools**, **10 resources**, and **4 prompts**. Tools take and return typed JSON (schemas generated from Go structs) and carry MCP annotations so clients can gate the dangerous ones.
+The server exposes **22 tools**, **10 resources**, and **4 prompts**, plus a self-defect journal (`list_faults`, `record_fault`, `resolve_fault`) modelled on CodeWitness's self-issue log and jCheck's self-report: append-only JSONL in the repository, fingerprint ids, and resolutions that are events rather than deletions. Tools take and return typed JSON (schemas generated from Go structs) and carry MCP annotations so clients can gate the dangerous ones.
 
 **Output discipline (applies to every tool)**
 

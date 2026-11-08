@@ -5,7 +5,7 @@ Dependabot's workflow, with no hosted service. It finds outdated and vulnerable
 dependencies in local repositories, turns them into reviewed update branches, and
 runs the project's build and tests before proposing anything.
 
-**Status: v0.9.0 — complete.** depmcp inventories a repository's
+**Status: v0.10.0 — self-defect journal.** depmcp inventories a repository's
 dependencies across **Go modules, npm, pnpm, yarn v1, Docker, GitHub Actions,
 Python (pip/uv/poetry), and Cargo**, finds
 newer versions and known vulnerabilities, builds a policy-filtered plan, applies
@@ -63,11 +63,12 @@ Register it with an MCP client (example: Claude Code):
 claude mcp add depmcp ~/.local/bin/depmcp serve
 ```
 
-Tools (19): `list_repositories`, `add_repository`, `update_repository`,
+Tools (22): `list_repositories`, `add_repository`, `update_repository`,
 `remove_repository`, `get_config`, `validate_config`, `status`,
 `scan_dependencies`, `check_updates`, `check_vulnerabilities`, `plan_updates`,
 `get_plan`, `apply_plan`, `verify_run`, `revert_run`, `list_runs`, `get_run`,
-`open_pull_request`, `import_dependabot`.
+`open_pull_request`, `import_dependabot`, `list_faults`, `record_fault`,
+`resolve_fault`.
 
 Prompts (4): `triage_vulnerabilities`, `review_updates`,
 `explain_breaking_change`, `weekly_digest`.
@@ -101,6 +102,22 @@ deleting it loses history, never intent.
 Mutation tools edit the YAML node tree, preserving comments and key order, then
 write temp → fsync → rename, and detect concurrent hand-edits by hash.
 
+## Self-defect journal
+
+depmcp records the defects it finds in itself in `<repo>/.depmcp/faults/`, so a
+later session can be asked to fix them:
+
+```bash
+depmcp faults                      # open entries, bugs first
+depmcp faults add "summary" --kind capability-gap --hint "what to do"
+depmcp faults resolve DEP-1A2B3C4D --note "fixed in <commit>"
+```
+
+`FAULTS.md` is a regenerated digest; `issues.jsonl` and `resolved.jsonl` are the
+records. A fault seen again after being resolved reopens automatically, so a
+regression cannot hide behind an old fix. See the current backlog in
+[.depmcp/faults/FAULTS.md](.depmcp/faults/FAULTS.md).
+
 ## Layout
 
 ```
@@ -127,6 +144,7 @@ internal/schedule/   systemd/launchd/cron artifact generation
 internal/notify/     file, desktop, and ntfy notification channels
 internal/forge/      local, GitHub, GitLab, and Gitea publishing
 internal/dependabot/ .github/dependabot.yml import
+internal/faults/     self-defect journal (.depmcp/faults)
 internal/secrets/    OS keyring store for forge tokens
 internal/httpcache/  shared on-disk HTTP cache with ETags
 spike/mcp-probe/   throwaway SDK capability probe from M-1
