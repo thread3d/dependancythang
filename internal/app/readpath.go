@@ -510,7 +510,11 @@ func (s *Service) PlanUpdates(ctx context.Context, repoRef string) (planner.Plan
 		return plan, fmt.Errorf("encode plan: %w", err)
 	}
 	created := time.Now()
-	if err := s.Store.SavePlan(ctx, plan.PlanID, repoTarget.ID, plan.Groups[0].Target, "gomod", created, data); err != nil {
+	// A plan for a repository with nothing to update has no groups, and that is a
+	// normal answer rather than a crash: the target row is left empty and
+	// apply_plan reports NOTHING_TO_APPLY. The ecosystem column is empty for the
+	// same reason — the plan spans whatever the groups carry.
+	if err := s.Store.SavePlan(ctx, plan.PlanID, repoTarget.ID, firstTarget(plan), "", created, data); err != nil {
 		return plan, err
 	}
 	return plan, nil
