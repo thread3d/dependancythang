@@ -17,6 +17,7 @@ import (
 	"github.com/thread3d/dependancythang/internal/ecosystem/actions"
 	"github.com/thread3d/dependancythang/internal/ecosystem/docker"
 	"github.com/thread3d/dependancythang/internal/ecosystem/gomod"
+	"github.com/thread3d/dependancythang/internal/ecosystem/maven"
 	"github.com/thread3d/dependancythang/internal/ecosystem/nodejs"
 	"github.com/thread3d/dependancythang/internal/ecosystem/v2eco"
 	"github.com/thread3d/dependancythang/internal/planner"
@@ -55,6 +56,8 @@ func ecosystemFor(name string) (ecosystem.Ecosystem, error) {
 		return v2eco.NewYarn(), nil
 	case "yarn-berry", "berry":
 		return v2eco.NewBerry(), nil
+	case "maven":
+		return maven.New(), nil
 	default:
 		return nil, fmt.Errorf("ecosystem %q is not supported", name)
 	}
@@ -65,6 +68,7 @@ func allEcosystems() []ecosystem.Ecosystem {
 	return []ecosystem.Ecosystem{
 		gomod.New(), nodejs.NewNpm(), nodejs.NewPnpm(), docker.New(), actions.New(),
 		v2eco.NewPython(), v2eco.NewCargo(), v2eco.NewYarn(), v2eco.NewBerry(),
+		maven.New(),
 	}
 }
 
@@ -129,6 +133,12 @@ func (s *Service) registryForEcosystem(name string) (ecosystem.Registry, error) 
 		return tagRegistry{src: src}, nil
 	case "pip", "python", "uv", "poetry":
 		src, err := tags.NewPyPI(cacheDir, s.Cfg.Server.Offline)
+		if err != nil {
+			return nil, err
+		}
+		return tagRegistry{src: src}, nil
+	case "maven":
+		src, err := tags.NewMaven(cacheDir, s.Cfg.Server.Offline)
 		if err != nil {
 			return nil, err
 		}

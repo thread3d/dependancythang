@@ -210,7 +210,8 @@ Docker and Actions implement `TagSource` with a heuristic tag order (`1.2-alpine
 | v1 | GitHub Actions | Bump `uses:` refs, preferring commit SHA pins with a version comment | Skips `@main`, `uses: ./`, and local actions. |
 | v2 | pip, uv, poetry | Update `pyproject.toml` or requirements files, then re-lock | |
 | v2 | Cargo | `cargo update -p` plus `Cargo.toml` requirement edits | |
-| later | Maven/Gradle, Nix flakes, Terraform, Homebrew | behind the same interface | |
+| v2 (0.12.0) | Maven | `mvn dependency:list` after a `compile`, on the reactor root; apply edits only a literal `<version>` |
+| later | Gradle, Nix flakes, Terraform, Homebrew | behind the same interface | |
 
 **Rules shared by all ecosystems**
 

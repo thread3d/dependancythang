@@ -9,6 +9,7 @@ package tags
 import (
 	"context"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"net/url"
 	"strings"
@@ -262,5 +263,67 @@ func (c *Crates) Tags(ctx context.Context, crate string) ([]ecosystem.Version, e
 		return nil, fmt.Errorf("crates.io %s: no versions published", crate)
 	}
 	ecosystem.SortDescending(out, semverx.Compare)
+	return out, nil
+}
+
+// Maven reads maven-metadata.xml from a repository, which lists every published
+// version of one groupId:artifactId.
+type Maven struct {
+	Base string
+	HTTP *httpcache.Client
+}
+
+// NewMaven builds a Maven Central tag source.
+func NewMaven(cacheDir string, offline bool) (*Maven, error) {
+	hc, err := httpcache.NewClient(cacheDir, offline)
+	if err != nil {
+		return nil, err
+	}
+	return &Maven{Base: "https://repo1.maven.org/maven2", HTTP: hc}, nil
+}
+
+// Name implements Source.
+func (m *Maven) Name() string { return "maven-central" }
+
+// Tags implements Source. The reference is "groupId:artifactId".
+func (m *Maven) Tags(ctx context.Context, coord string) ([]ecosystem.Version, error) {
+	group, artifact, ok := strings.Cut(coord, ":")
+	if !ok || group == "" || artifact == "" {
+		return nil, fmt.Errorf("maven coordinate %q is not groupId:artifactId", coord)
+	}
+	path := strings.ReplaceAll(group, ".", "/")
+	endpoint := strings.TrimSuffix(m.Base, "/") + "/" + path + "/" + artifact + "/maven-metadata.xml"
+	body, err := m.HTTP.Get(ctx, endpoint)
+	if err != nil {
+		return nil, fmt.Errorf("maven central %s: %w", coord, err)
+	}
+	var doc struct {
+		Versioning struct {
+			Latest     string `xml:"latest"`
+			Release    string `xml:"release"`
+			LastUpdate string `xml:"lastUpdated"`
+			Versions   struct {
+				Version []string `xml:"version"`
+			} `xml:"versions"`
+		} `xml:"versioning"`
+	}
+	if err := xml.Unmarshal([]byte(body), &doc); err != nil {
+		return nil, fmt.Errorf("decode maven-metadata for %s: %w", coord, err)
+	}
+	out := make([]ecosystem.Version, 0, len(doc.Versioning.Versions.Version))
+	for _, v := range doc.Versioning.Versions.Version {
+		if v == "" {
+			continue
+		}
+		// A SNAPSHOT is a moving target, not a release: it is reported but never
+		// proposed as an update target.
+		out = append(out, ecosystem.Version{
+			Raw:    v,
+			Yanked: strings.Contains(strings.ToUpper(v), "SNAPSHOT"),
+		})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("maven central %s: no versions published", coord)
+	}
 	return out, nil
 }

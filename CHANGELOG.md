@@ -47,6 +47,61 @@ A bug depmcp found in itself while being dogfooded as an MCP server.
 ## [Unreleased]
 
 ### Planned
+- Maven: property-aware apply (edit `<properties>` in the declaring pom) and
+  resolution of `dependencyManagement` versions, so the 25% of versions that are
+  indirected become updatable.
+
+## [0.12.0] — 2026-11-08
+
+Maven support — the ninth ecosystem, and the first whose read path is a toolchain
+invocation rather than a file parse.
+
+### Added
+- **`internal/ecosystem/maven`**: detection, inventory, ordering, and a limited
+  apply. The unit of work is the **reactor root**, not a module: a pom listing
+  `<modules>` is one target, because `dependencyManagement`, BOM imports, and
+  property indirection all mean a dependency's effective version may be declared
+  somewhere other than the element naming it. Reporting modules separately would
+  count the same dependency many times and plan conflicting bumps.
+- **Inventory delegates to `mvn`** — `dependency:list`, preceded by `compile`.
+  Maven has no lockfile, so the resolved graph cannot be read from files. The
+  `compile` phase is not optional: a bare `dependency:list` resolves each module
+  alone and fails on a sibling artifact that exists only in the reactor.
+- **A declared-dependency fallback.** When a reactor cannot build — no network, a
+  missing JDK, a broken module — the poms are read directly. Property-indirected
+  versions come back unresolved rather than invented, and the tool says so by
+  leaving `current` empty.
+- **Maven Central metadata** joins the shared tag cache
+  (`maven-metadata.xml` per `groupId:artifactId`); SNAPSHOTs are reported but never
+  proposed.
+- **Ordering** is a documented simplification of Maven's `ComparableVersion`:
+  numeric segments compare numerically and `alpha < beta < milestone < rc <
+  snapshot < release`, so a release outranks its own candidate.
+- **Apply edits only a literal `<version>`.** A property-indirected version and a
+  centrally managed one are both refused, because splicing the element would create
+  a second source of truth. That limit is deliberate, not incidental.
+- **Phase B mounts `~/.m2/repository` read-only**, like `GOMODCACHE`: a JVM project
+  resolves from a local repository rather than a lockfile, so it cannot be verified
+  without one.
+
+### Verified
+Against CodeWitness's real 23-module reactor: the reactor collapsed to a single
+`maven:/` target, and the same scan found 12 targets across six ecosystems
+(Go, npm, Actions, Python, Cargo, Maven) in that repository. The inventory shown
+was the fallback path — 33 dependencies, 13 with unresolved (property-indirected)
+versions, which is exactly what the degraded path is supposed to report instead of
+guessing.
+
+### Known limitations
+- A full Maven inventory is a **compile**, not a file read, so it is far slower
+  than every other ecosystem and needs a warm local repository.
+- Versions behind `${property}` (~25% of CodeWitness's) and versions declared only
+  in `dependencyManagement` are not yet updatable.
+- Gradle is not implemented; it shares nothing with Maven beyond the JVM.
+
+## [Unreleased]
+
+### Planned
 - Nothing open. `.depmcp/faults/` is empty of open entries.
 
 ## [0.11.0] — 2026-11-08

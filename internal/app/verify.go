@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -120,6 +121,12 @@ func (s *Service) VerifyRun(ctx context.Context, runID string) (store.Run, verif
 	if err != nil {
 		return run, verify.Result{}, coded(CodeSandboxUnavailable, err)
 	}
+	// Maven resolves from a local repository rather than a lockfile, so a JVM
+	// project can only be verified if that repository is visible read-only.
+	readOnlyPaths := []string{gomodCache}
+	if repo := mavenLocalRepository(); repo != "" {
+		readOnlyPaths = append(readOnlyPaths, repo)
+	}
 
 	// Verification builds and tests the *project*, not one ecosystem's target:
 	// a repository whose change was a workflow edit is still verified by its Go
@@ -146,7 +153,7 @@ func (s *Service) VerifyRun(ctx context.Context, runID string) (store.Run, verif
 	result, err := verify.Run(ctx, sb, cmds, verify.Options{
 		Dir:           run.Worktree,
 		Env:           verifyEnv(gomodCache),
-		ReadOnlyPaths: []string{gomodCache},
+		ReadOnlyPaths: readOnlyPaths,
 		Network:       false,
 		Timeout:       timeout,
 		StopOnFailure: true,
@@ -181,6 +188,26 @@ func (s *Service) VerifyRun(ctx context.Context, runID string) (store.Run, verif
 		return run, result, coded(code, fmt.Errorf("verification did not pass: %s", result.Summary))
 	}
 	return run, result, nil
+}
+
+// mavenLocalRepository returns the Maven local repository when it exists. An
+// alternate location can be set with MAVEN_OPTS or settings.xml; this honours the
+// default and the environment override the toolchain itself documents.
+func mavenLocalRepository() string {
+	if override := strings.TrimSpace(os.Getenv("MAVEN_REPO_LOCAL")); override != "" {
+		if info, err := os.Stat(override); err == nil && info.IsDir() {
+			return override
+		}
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	repo := filepath.Join(home, ".m2", "repository")
+	if info, err := os.Stat(repo); err == nil && info.IsDir() {
+		return repo
+	}
+	return ""
 }
 
 // verifyCommands collects the build and test commands of every ecosystem that
