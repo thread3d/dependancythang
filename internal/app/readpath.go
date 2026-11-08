@@ -202,6 +202,12 @@ func (s *Service) repoByID(id string) (config.Repository, string, error) {
 
 // ScanDependencies detects targets and returns their inventory, persisting a
 // snapshot for each.
+//
+// A target can own more than one manifest — the workflows directory holds one
+// file per workflow, and a repository can have several Dockerfiles in one
+// directory — so a dependency is one row per (target, name), not one row per
+// file. Keeping both rows would double-count it in `scan` and `check`, and carry
+// the same change into a plan twice, which the plan then rejects as a duplicate.
 func (s *Service) ScanDependencies(ctx context.Context, repoRef string) (RepoTarget, []ecosystem.Dependency, error) {
 	repo, path, err := s.repoByID(repoRef)
 	if err != nil {
@@ -210,6 +216,11 @@ func (s *Service) ScanDependencies(ctx context.Context, repoRef string) (RepoTar
 	out := RepoTarget{ID: config.RepoID(path), Path: path}
 
 	var all []ecosystem.Dependency
+	// Rows are collected per target key and written once, so a second manifest in
+	// the same target cannot clear the first one's snapshot (SaveInventory
+	// replaces a target's rows wholesale).
+	rowsByTarget := map[string][]store.DependencyRow{}
+	seen := map[string]bool{}
 	now := time.Now()
 	for _, eco := range allEcosystems() {
 		targets, derr := eco.Detect(ctx, path)
@@ -222,14 +233,26 @@ func (s *Service) ScanDependencies(ctx context.Context, repoRef string) (RepoTar
 				return out, all, ierr
 			}
 			out.Targets = append(out.Targets, t)
-			rows := make([]store.DependencyRow, 0, len(deps))
 			for _, d := range deps {
-				rows = append(rows, store.DependencyRow{Name: d.Name, Current: d.Current, Direct: d.Direct})
+				key := t.Key() + "\x00" + d.Name
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				rowsByTarget[t.Key()] = append(rowsByTarget[t.Key()],
+					store.DependencyRow{Name: d.Name, Current: d.Current, Direct: d.Direct})
+				all = append(all, d)
 			}
-			if serr := s.Store.SaveInventory(ctx, out.ID, t.Key(), rows, now); serr != nil {
-				return out, all, serr
-			}
-			all = append(all, deps...)
+		}
+	}
+	saved := make([]string, 0, len(rowsByTarget))
+	for key := range rowsByTarget {
+		saved = append(saved, key)
+	}
+	sort.Strings(saved)
+	for _, key := range saved {
+		if serr := s.Store.SaveInventory(ctx, out.ID, key, rowsByTarget[key], now); serr != nil {
+			return out, all, serr
 		}
 	}
 	_ = s.Store.MarkScanned(ctx, out.ID, now)

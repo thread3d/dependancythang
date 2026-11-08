@@ -14,6 +14,7 @@ import (
 	"github.com/thread3d/dependancythang/internal/config"
 	"github.com/thread3d/dependancythang/internal/ecosystem"
 	"github.com/thread3d/dependancythang/internal/planner"
+	"github.com/thread3d/dependancythang/internal/policy"
 	"github.com/thread3d/dependancythang/internal/store"
 )
 
@@ -357,4 +358,95 @@ func TestListRuns(t *testing.T) {
 	if !strings.HasPrefix(runs[0].Branch, "depmcp/") {
 		t.Errorf("branch = %q, want a depmcp/ prefix", runs[0].Branch)
 	}
+}
+
+// workflowRepo creates a git repository whose workflow files all pin one action
+// at one ref, the shape every repository with more than one workflow file has.
+func workflowRepo(t *testing.T, action, ref string, files ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	run := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	run("init", "-b", "main")
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "Test")
+	workflows := filepath.Join(dir, ".github", "workflows")
+	if err := os.MkdirAll(workflows, 0o755); err != nil {
+		t.Fatalf("mkdir workflows: %v", err)
+	}
+	for _, name := range files {
+		body := "on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: " +
+			action + "@" + ref + "\n"
+		if err := os.WriteFile(filepath.Join(workflows, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	run("add", "-A")
+	run("commit", "-m", "initial")
+	return dir
+}
+
+// TestApplyPlanAcceptsOneActionRefInTwoWorkflowFiles is the regression for a plan
+// depmcp built and then refused as PLAN_STALE: two workflow files sharing one
+// action ref produce two changes with the same dependency and target version,
+// which is work in two files rather than a duplicate.
+func TestApplyPlanAcceptsOneActionRefInTwoWorkflowFiles(t *testing.T) {
+	ctx := context.Background()
+	const action, from, to = "actions/checkout", "v7", "v8"
+	repoPath := workflowRepo(t, action, from, "ci.yml", "lean.yml")
+	svc := newService(t, repoPath)
+	svc.Registry = &fakeRegistry{versions: map[string][]ecosystem.Version{
+		action: {{Raw: to, PublishedAt: time.Now().Add(-48 * time.Hour).Format(time.RFC3339)}},
+	}}
+
+	// The read path detects one target per workflow file, so the plan carries the
+	// same change twice, once per file.
+	decisions := []policy.Decision{}
+	for _, name := range []string{"ci.yml", "lean.yml"} {
+		decisions = append(decisions, policy.Decision{
+			Dependency: action, From: from, To: to,
+			Class: ecosystem.ClassPin, Include: true, Direct: true,
+			Ecosystem: "actions", Target: "actions:/.github/workflows/" + name,
+		})
+	}
+	plan := planner.Build(decisions, "", config.RepoID(repoPath), time.Now())
+	if plan.TotalChanges != 2 {
+		t.Fatalf("plan changes = %d, want 2 (one per workflow file)", plan.TotalChanges)
+	}
+	plan.PlanID = "two-workflows-" + to
+	if err := svc.Store.SavePlan(ctx, plan.PlanID, config.RepoID(repoPath), firstGroupTarget(plan), "actions", time.Now(), mustJSON(t, plan)); err != nil {
+		t.Fatalf("save plan: %v", err)
+	}
+
+	run, err := svc.ApplyPlan(ctx, plan.PlanID, true)
+	if err != nil {
+		t.Fatalf("ApplyPlan refused a plan it built itself: %v (code %q)", err, app.CodeOf(err))
+	}
+	if run.Status != store.StatusApplied {
+		t.Errorf("status = %q, want %q (detail: %s)", run.Status, store.StatusApplied, run.Detail)
+	}
+	for _, name := range []string{"ci.yml", "lean.yml"} {
+		data, err := os.ReadFile(filepath.Join(run.Worktree, ".github", "workflows", name))
+		if err != nil {
+			t.Fatalf("read %s from worktree: %v", name, err)
+		}
+		if !strings.Contains(string(data), action+"@"+to) {
+			t.Errorf("%s was not bumped to %s:\n%s", name, to, data)
+		}
+	}
+}
+
+// firstGroupTarget mirrors what PlanUpdates stores as a plan's target row.
+func firstGroupTarget(plan planner.Plan) string {
+	for _, g := range plan.Groups {
+		if g.Target != "" {
+			return g.Target
+		}
+	}
+	return ""
 }

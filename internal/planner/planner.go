@@ -167,12 +167,25 @@ func Validate(p Plan, now time.Time) []error {
 	if p.PlanID == "" {
 		problems = append(problems, fmt.Errorf("plan has no id"))
 	}
+	// A change is identified by the file it edits as well as by the dependency:
+	// two workflow files can use the same action at the same ref, and two go.mod
+	// files can need the same module at the same version. Those are two units of
+	// work in two files — the way Build already groups them — not a duplicate
+	// change, so the target is part of the key.
 	seen := map[string]bool{}
 	for _, g := range p.Groups {
 		for _, c := range g.Changes {
-			key := c.Dependency + "@" + c.To
+			target := c.Target
+			if target == "" {
+				target = g.Target
+			}
+			key := target + "|" + c.Dependency + "@" + c.To
 			if seen[key] {
-				problems = append(problems, fmt.Errorf("duplicate change for %s", key))
+				label := c.Dependency + "@" + c.To
+				if target != "" {
+					label += " in " + target
+				}
+				problems = append(problems, fmt.Errorf("duplicate change for %s", label))
 			}
 			seen[key] = true
 			if c.From == c.To {

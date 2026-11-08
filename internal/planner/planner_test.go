@@ -1,6 +1,7 @@
 package planner_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -71,6 +72,65 @@ func TestPlanIDIsDeterministic(t *testing.T) {
 	}, "gomod", "repo-1", now)
 	if other.PlanID == a.PlanID {
 		t.Error("different changes produced the same plan id")
+	}
+}
+
+// targetDecision is a decision belonging to one manifest target, the way the
+// read path produces one per detected file.
+func targetDecision(target, name, from, to string) policy.Decision {
+	d := decision(name, from, to, "")
+	d.Target = target
+	d.Ecosystem = "actions"
+	return d
+}
+
+// TestBuildThenValidateAcceptsTheSameChangeInTwoTargets is the regression for a
+// plan depmcp rejected with PLAN_STALE although it had just built it itself.
+//
+// Two workflow files can use the same action at the same ref, so the plan holds
+// "actions/checkout v7 -> v8" once per file. That is two units of work in two
+// files, not a duplicate, and Validate must not confuse the two.
+func TestBuildThenValidateAcceptsTheSameChangeInTwoTargets(t *testing.T) {
+	decisions := []policy.Decision{
+		targetDecision("actions:/.github/workflows/ci.yml", "actions/checkout", "v7", "v8"),
+		targetDecision("actions:/.github/workflows/lean.yml", "actions/checkout", "v7", "v8"),
+	}
+	p := planner.Build(decisions, "", "repo-1", now)
+
+	if len(p.Groups) != 2 {
+		t.Fatalf("groups = %d, want 2 (one per workflow file)", len(p.Groups))
+	}
+	if problems := planner.Validate(p, now); len(problems) != 0 {
+		t.Errorf("Build produced a plan Validate rejects: %v", problems)
+	}
+}
+
+// TestValidateStillCatchesADuplicateInsideOneTarget keeps the check's real job:
+// the same dependency offered twice for the same file is a plan that cannot be
+// applied consistently.
+func TestValidateStillCatchesADuplicateInsideOneTarget(t *testing.T) {
+	dup := planner.Plan{
+		PlanID: "abc",
+		Groups: []planner.Group{
+			{
+				Name: "default", Target: "gomod:/",
+				Changes: []planner.Change{{
+					Dependency: "a", From: "v1.0.0", To: "v1.1.0",
+					Class: ecosystem.ClassMinor, Target: "gomod:/",
+				}},
+			},
+			{
+				Name: "other", Target: "gomod:/",
+				Changes: []planner.Change{{
+					Dependency: "a", From: "v1.0.0", To: "v1.1.0",
+					Class: ecosystem.ClassMinor, Target: "gomod:/",
+				}},
+			},
+		},
+	}
+	problems := planner.Validate(dup, now)
+	if len(problems) != 1 || !strings.Contains(problems[0].Error(), "duplicate") {
+		t.Fatalf("problems = %v, want one duplicate-change problem", problems)
 	}
 }
 
