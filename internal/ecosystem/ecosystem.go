@@ -186,7 +186,10 @@ type VersionMismatch struct {
 // record of a change that never happened.
 type PlanMismatchError struct {
 	// Where names the manifest, or the directory, that was looked in.
-	Where      string            `json:"where,omitempty"`
+	Where string `json:"where,omitempty"`
+	// Base is the ref the tree was created from, set by the caller that knows it.
+	// It is what turns "the branch holds v4" into "origin/main holds v4".
+	Base       string            `json:"base,omitempty"`
 	Mismatches []VersionMismatch `json:"mismatches"`
 }
 
@@ -200,8 +203,13 @@ func (e *PlanMismatchError) Error() string {
 		parts = append(parts, fmt.Sprintf("%s is %s, the plan expects %s", m.Name, m.Got, m.Want))
 	}
 	msg := "the tree is not the one the plan was built from: " + strings.Join(parts, "; ")
-	if e.Where != "" {
+	switch {
+	case e.Where != "" && e.Base != "":
+		msg += " (" + e.Where + ", based on " + e.Base + ")"
+	case e.Where != "":
 		msg += " (" + e.Where + ")"
+	case e.Base != "":
+		msg += " (based on " + e.Base + ")"
 	}
 	return msg + "; re-plan before applying"
 }

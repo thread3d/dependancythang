@@ -260,6 +260,7 @@ func (s *Service) applyIntoWorktree(ctx context.Context, run *store.Run, plan pl
 		// plan expects is reporting a stale plan, not a toolchain failure: the
 		// caller has to re-plan, not retry.
 		if mismatch, ok := ecosystem.PlanMismatch(err); ok {
+			mismatch.Base = baseRef
 			return coded(CodePlanStale, mismatch)
 		}
 		return fmt.Errorf("apply to %s: %w", run.Branch, err)
@@ -270,7 +271,7 @@ func (s *Service) applyIntoWorktree(ctx context.Context, run *store.Run, plan pl
 	// success while leaving a change untouched would otherwise land a commit that
 	// describes a diff it did not make (§8: the observed delta is the truth).
 	if mismatches := unappliedChanges(plan, result); len(mismatches) > 0 {
-		mismatch := &ecosystem.PlanMismatchError{Where: run.Branch, Mismatches: mismatches}
+		mismatch := &ecosystem.PlanMismatchError{Where: run.Branch, Base: baseRef, Mismatches: mismatches}
 		cleanup(mismatch.Error())
 		return coded(CodePlanStale, mismatch)
 	}

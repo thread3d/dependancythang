@@ -4,7 +4,18 @@ Generated from `issues.jsonl` and `resolved.jsonl`; do not edit by hand.
 Read the open entries, fix them, then record a resolution with `depmcp faults resolve <id>`.
 A fault seen again after its resolution reopens automatically.
 
-2 open, 8 resolved.
+3 open, 8 resolved.
+
+## DEP-5E2E25AF — the plan is built from the working tree while apply bases on the default branch
+
+- kind: `tool-failure` · severity: `bug` · seen 1 time(s)
+- first: 2026-11-08T13:02:47.122448446Z · last: 2026-11-08T13:02:47.122448446Z
+- command: `faults add`
+- **fix:** Build the plan from the same ref apply will use — a temporary worktree, or the manifests read with git show <ref>:<path> — or record the base ref in the plan and refuse at plan time when the working tree differs from it.
+
+```
+On rMath: plan_updates reads the files on disk and proposes actions/checkout v7 -> v7.0.1, setup-python v7 -> v7.1.0, because the checked-out branch chore/codewitness-depmcp-pass (2c20151) pins the current majors. apply_plan creates its worktree from the repository's default branch, origin/main (4fbc2e8), which still pins v4/v5, so the run now fails with PLAN_STALE: 'actions/checkout is v4, the plan expects v7; actions/setup-python is v5, the plan expects v7 (…, based on origin/main)'. Before the from-ref check this applied silently and committed a diff described as v7 -> v7.0.1. Either way, a user on a branch ahead of the default branch cannot update it through depmcp.
+```
 
 ## DEP-445BAE19 — the delegated appliers record the requested change as the observation
 
