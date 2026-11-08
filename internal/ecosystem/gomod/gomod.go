@@ -154,6 +154,10 @@ func (e *Ecosystem) Inventory(ctx context.Context, t ecosystem.Target) ([]ecosys
 // fixes, so both sides are normalized first.
 func (*Ecosystem) Compare(a, b string) int { return semver.Compare(normalizeV(a), normalizeV(b)) }
 
+// NormalizeVersion implements ecosystem.VersionNormalizer, so a version that came
+// from an advisory is spelled the way a Go plan spells everything else.
+func (e *Ecosystem) NormalizeVersion(v string) string { return normalizeV(v) }
+
 // normalizeV ensures a Go version carries the "v" prefix x/mod/semver requires.
 func normalizeV(v string) string {
 	v = strings.TrimSpace(v)

@@ -24,20 +24,23 @@ func registerFaultTools(s *mcp.Server, svc *app.Service) {
 		Total   int            `json:"total"`
 		Faults  []faults.Entry `json:"faults"`
 	}
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name: "list_faults",
 		Description: "List defects depmcp has recorded against itself, open first. " +
 			"Each entry carries a fix hint, which is what a later session should act on.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: ptr(false)},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in listIn) (*mcp.CallToolResult, listOut, error) {
-		entries, dir, err := svc.ListFaults(ctx, in.Repository, in.IncludeResolved)
+		all, dir, err := svc.ListFaults(ctx, in.Repository)
 		if err != nil {
 			return nil, listOut{}, wrap(svc, "list_faults", map[string]any{"repository": in.Repository}, err)
 		}
-		out := listOut{Journal: dir, Total: len(entries), Faults: entries}
-		for _, e := range entries {
+		out := listOut{Journal: dir, Total: len(all)}
+		for _, e := range all {
 			if !e.Resolved {
 				out.Open++
+			}
+			if in.IncludeResolved || !e.Resolved {
+				out.Faults = append(out.Faults, e)
 			}
 		}
 		_ = svc.RecordTool(ctx, "list_faults", map[string]any{"open": out.Open}, nil, "")
@@ -55,7 +58,7 @@ func registerFaultTools(s *mcp.Server, svc *app.Service) {
 	type recordOut struct {
 		Fault faults.Fault `json:"fault"`
 	}
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name: "record_fault",
 		Description: "Record a defect depmcp found in itself, or friction noticed while using it. " +
 			"Recording is best effort and never changes the outcome of the operation that exposed it.",
@@ -89,7 +92,7 @@ func registerFaultTools(s *mcp.Server, svc *app.Service) {
 		FaultID  string `json:"fault_id"`
 		Note     string `json:"note,omitempty"`
 	}
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name: "resolve_fault",
 		Description: "Record that a fault was fixed. A resolution is an event, not a deletion: " +
 			"if the fault is seen again afterwards it reopens, which is what a regression looks like.",

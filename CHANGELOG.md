@@ -47,6 +47,51 @@ A bug depmcp found in itself while being dogfooded as an MCP server.
 ## [Unreleased]
 
 ### Planned
+- Nothing open. `.depmcp/faults/` is empty of open entries.
+
+## [0.11.0] — 2026-11-08
+
+The four open entries in `.depmcp/faults/` are fixed. This is the journal doing its
+job: each entry carried a hint, and the work below is those hints executed.
+
+### Fixed
+- **`DEP-A569750B` — panics escaped the tool boundary.** Every tool now registers
+  through `addTool`, which recovers a panic, records an internal fault *with its
+  stack*, and returns `INTERNAL_ERROR` as an ordinary `isError` result. Before, the
+  client saw a broken call with no explanation and the defect left no trace.
+  Covered by `internal/mcpserver/panic_internal_test.go`.
+- **`DEP-B8A77617` — advisory targets lost their `v` prefix.** Added
+  `ecosystem.VersionNormalizer`; gomod implements it, and `PlanUpdates` normalizes
+  every decision's target, so an advisory fix reads `v0.44.0` like every other Go
+  version in the plan.
+- **`DEP-9DE3A533` — scheduled runs ignored `auto_pr`.** `RunOnce` now publishes
+  through the configured forge when `auto_pr` is true, reporting the pull request
+  URL or the local report path. A publish failure is reported but does not count
+  toward suspension, because it is usually a token or remote problem and the
+  verified branch is already sitting there. Covered by
+  `internal/app/autopr_test.go`.
+- **`DEP-9D45551D` — yarn berry was refused.** Added `v2eco.Berry`: a real berry
+  reader for `__metadata` headers, `@npm:` descriptors, multi-descriptor keys, and
+  `yarn up`. Yarn v1 now *declines* a berry lockfile instead of erroring on it, so
+  the two readers can never misread each other's format. Workspace, patch, link,
+  and file descriptors are not inventoried as dependencies.
+
+### Fixed while fixing
+- **The backlog reported `total: 0` when entries existed.** `ListFaults` filtered
+  before the caller counted, so `total` was the open count and a caller was told the
+  backlog was empty. Filtering is now the caller's job and `total` is the size of
+  the backlog.
+- Berry's descriptor parser returned a name for `@workspace:`, `@patch:`, and
+  `@link:` entries, inventing dependencies nobody can update. Only `@npm:` yields a
+  package name.
+
+### Added
+- **yarn berry** as an eighth ecosystem, and `yarn-berry` (or `berry`) in
+  configuration.
+
+## [Unreleased]
+
+### Planned
 - Clear the open backlog in `.depmcp/faults/FAULTS.md`.
 
 ## [0.10.0] — 2026-11-08

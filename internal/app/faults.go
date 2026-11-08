@@ -66,26 +66,18 @@ func (s *Service) RecordFault(ctx context.Context, repoRef string, f faults.Faul
 	return recorded, nil
 }
 
-// ListFaults returns a repository's backlog, unresolved first.
-func (s *Service) ListFaults(ctx context.Context, repoRef string, includeResolved bool) ([]faults.Entry, string, error) {
+// ListFaults returns a repository's whole backlog, unresolved first.
+//
+// Filtering is the caller's job, deliberately: a previous version filtered here,
+// which made "total" report the open count and told a caller the backlog was empty
+// when it was not.
+func (s *Service) ListFaults(ctx context.Context, repoRef string) ([]faults.Entry, string, error) {
 	journal, err := s.journalFor(repoRef)
 	if err != nil {
 		return nil, "", err
 	}
 	entries, err := journal.List()
-	if err != nil {
-		return nil, journal.Dir(), err
-	}
-	if includeResolved {
-		return entries, journal.Dir(), nil
-	}
-	open := make([]faults.Entry, 0, len(entries))
-	for _, e := range entries {
-		if !e.Resolved {
-			open = append(open, e)
-		}
-	}
-	return open, journal.Dir(), nil
+	return entries, journal.Dir(), err
 }
 
 // ResolveFault records a resolution event for a fault id.

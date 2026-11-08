@@ -53,6 +53,8 @@ func ecosystemFor(name string) (ecosystem.Ecosystem, error) {
 		return v2eco.NewCargo(), nil
 	case "yarn":
 		return v2eco.NewYarn(), nil
+	case "yarn-berry", "berry":
+		return v2eco.NewBerry(), nil
 	default:
 		return nil, fmt.Errorf("ecosystem %q is not supported", name)
 	}
@@ -62,7 +64,7 @@ func ecosystemFor(name string) (ecosystem.Ecosystem, error) {
 func allEcosystems() []ecosystem.Ecosystem {
 	return []ecosystem.Ecosystem{
 		gomod.New(), nodejs.NewNpm(), nodejs.NewPnpm(), docker.New(), actions.New(),
-		v2eco.NewPython(), v2eco.NewCargo(), v2eco.NewYarn(),
+		v2eco.NewPython(), v2eco.NewCargo(), v2eco.NewYarn(), v2eco.NewBerry(),
 	}
 }
 
@@ -137,7 +139,7 @@ func (s *Service) registryForEcosystem(name string) (ecosystem.Registry, error) 
 			return nil, err
 		}
 		return tagRegistry{src: src}, nil
-	case "yarn":
+	case "yarn", "yarn-berry", "berry":
 		src, err := tags.NewNPM(cacheDir, s.Cfg.Server.Offline)
 		if err != nil {
 			return nil, err
@@ -459,6 +461,11 @@ func (s *Service) PlanUpdates(ctx context.Context, repoRef string) (planner.Plan
 		}
 		dec := policy.Decide(in, rules)
 		dec.Ecosystem = ecoName
+		// An advisory-derived target arrives in the database's spelling; put it in
+		// the ecosystem's before it reaches a plan.
+		if normalizer, ok := eco.(ecosystem.VersionNormalizer); ok {
+			dec.To = normalizer.NormalizeVersion(dec.To)
+		}
 		decisions = append(decisions, dec)
 	}
 

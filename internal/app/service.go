@@ -32,6 +32,9 @@ const (
 	CodeNotAGitRepo       = "NOT_A_GIT_REPO"
 	CodeRepoBusy          = "REPO_BUSY"
 	CodePathOutsideRoot   = "PATH_OUTSIDE_ROOT"
+	// CodeInternal is a panic that escaped a tool handler. It is a documented code
+	// so the fault is journaled once, by the receiver, rather than twice.
+	CodeInternal = "INTERNAL_ERROR"
 )
 
 // CodedError carries a stable code alongside the message so tool handlers do not

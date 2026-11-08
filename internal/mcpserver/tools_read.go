@@ -24,7 +24,7 @@ func registerReadTools(s *mcp.Server, svc *app.Service) {
 		Dependencies []ecosystem.Dependency `json:"dependencies"`
 		Truncated    bool                   `json:"truncated"`
 	}
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name:        "scan_dependencies",
 		Description: "Inventory a tracked repository's Go module dependencies, direct and indirect.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: ptr(false)},
@@ -53,7 +53,7 @@ func registerReadTools(s *mcp.Server, svc *app.Service) {
 		Candidates []app.Candidate `json:"candidates"`
 		Total      int             `json:"total"`
 	}
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name:        "check_updates",
 		Description: "Report newer versions available for a repository's dependencies, with the update class and publish time.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: ptr(true)},
@@ -71,7 +71,7 @@ func registerReadTools(s *mcp.Server, svc *app.Service) {
 		Vulnerabilities []app.Vulnerability `json:"vulnerabilities"`
 		Total           int                 `json:"total"`
 	}
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name:        "check_vulnerabilities",
 		Description: "Query OSV for advisories affecting the versions currently in use. Always refreshes rather than trusting the cache.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: ptr(true)},
@@ -87,7 +87,7 @@ func registerReadTools(s *mcp.Server, svc *app.Service) {
 	type planOut struct {
 		Plan planner.Plan `json:"plan"`
 	}
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name:        "plan_updates",
 		Description: "Build an update plan under current policy. Mutates no repository; stores the plan and returns its id.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: false, OpenWorldHint: ptr(true)},
@@ -103,7 +103,7 @@ func registerReadTools(s *mcp.Server, svc *app.Service) {
 	type getPlanIn struct {
 		PlanID string `json:"plan_id" jsonschema:"plan id returned by plan_updates"`
 	}
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name:        "get_plan",
 		Description: "Retrieve a stored update plan by id.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: ptr(false)},

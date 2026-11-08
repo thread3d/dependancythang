@@ -9,10 +9,13 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"runtime/debug"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/thread3d/dependancythang/internal/app"
 	"github.com/thread3d/dependancythang/internal/config"
+	"github.com/thread3d/dependancythang/internal/faults"
 	"github.com/thread3d/dependancythang/internal/version"
 )
 
@@ -46,7 +49,7 @@ type listRepositoriesOut struct {
 }
 
 func registerRepositoryTools(s *mcp.Server, svc *app.Service) {
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name:        "list_repositories",
 		Description: "List tracked repositories with their forge, remote, and last scan time.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: ptr(false)},
@@ -67,7 +70,7 @@ func registerRepositoryTools(s *mcp.Server, svc *app.Service) {
 	type addRepositoryOut struct {
 		Repository app.RepoView `json:"repository"`
 	}
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name:        "add_repository",
 		Description: "Track a git repository by writing it to the configuration file. Re-adding an identical entry changes nothing.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: ptr(false), IdempotentHint: true, OpenWorldHint: ptr(false)},
@@ -90,7 +93,7 @@ func registerRepositoryTools(s *mcp.Server, svc *app.Service) {
 	type updateRepositoryOut struct {
 		Repository app.RepoView `json:"repository"`
 	}
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name:        "update_repository",
 		Description: "Change a tracked repository's forge or remote in the configuration file.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: ptr(false), IdempotentHint: true, OpenWorldHint: ptr(false)},
@@ -116,7 +119,7 @@ func registerRepositoryTools(s *mcp.Server, svc *app.Service) {
 		Removed bool   `json:"removed"`
 		Path    string `json:"path"`
 	}
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name:        "remove_repository",
 		Description: "Stop tracking a repository by editing the configuration file. Never deletes files, branches, or history.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: ptr(true), IdempotentHint: true, OpenWorldHint: ptr(false)},
@@ -141,7 +144,7 @@ type effectiveConfigOut struct {
 }
 
 func registerConfigTools(s *mcp.Server, svc *app.Service) {
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name:        "get_config",
 		Description: "Show the effective merged configuration and which layers produced it.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: ptr(false)},
@@ -167,7 +170,7 @@ func registerConfigTools(s *mcp.Server, svc *app.Service) {
 		Valid  bool           `json:"valid"`
 		Issues []config.Issue `json:"issues,omitempty"`
 	}
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name:        "validate_config",
 		Description: "Validate a candidate configuration without saving it. Reports unknown keys with line numbers.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: ptr(false)},
@@ -201,7 +204,7 @@ type lockHolder struct {
 }
 
 func registerStatusTool(s *mcp.Server, svc *app.Service) {
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name:        "status",
 		Description: "Report state directory, database statistics, and any repository locks currently held.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: ptr(false)},
@@ -228,6 +231,51 @@ func registerStatusTool(s *mcp.Server, svc *app.Service) {
 }
 
 // ---- helpers ------------------------------------------------------------
+
+// addTool registers a tool behind panic recovery.
+//
+// A panic that escapes a handler is the one failure the transport cannot describe:
+// the client sees a broken call with no explanation, and the defect leaves no trace
+// unless it is caught here. It is recorded as an internal fault and returned as an
+// ordinary isError result.
+func addTool[In, Out any](s *mcp.Server, svc *app.Service, t *mcp.Tool, h mcp.ToolHandlerFor[In, Out]) {
+	mcp.AddTool(s, t, func(ctx context.Context, req *mcp.CallToolRequest, in In) (res *mcp.CallToolResult, out Out, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				stack := string(debug.Stack())
+				_, _ = svc.RecordFault(ctx, repositoryOf(in), faults.Fault{
+					Kind:    faults.KindInternal,
+					Summary: fmt.Sprintf("panic in %s: %v", t.Name, r),
+					Detail:  fmt.Sprintf("panic: %v", r),
+					Stack:   stack,
+					Command: t.Name,
+					Hint: "The stack in issues.jsonl names the frame. Fix the nil dereference or " +
+						"impossible state, and add a regression test that reaches this handler with " +
+						"the same input.",
+				})
+				err = fmt.Errorf("%s: internal panic in %s: %v", app.CodeInternal, t.Name, r)
+				var zero Out
+				out = zero
+				res = nil
+			}
+		}()
+		return h(ctx, req, in)
+	})
+}
+
+// repositoryOf reads a "repository" argument out of a typed tool input, so a fault
+// lands in the right checkout's journal. It is reflection because the handlers are
+// generic; a missing field simply yields "".
+func repositoryOf(v any) string {
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Struct {
+		return ""
+	}
+	if f := rv.FieldByName("Repository"); f.IsValid() && f.Kind() == reflect.String {
+		return f.String()
+	}
+	return ""
+}
 
 func ptr[T any](v T) *T { return &v }
 

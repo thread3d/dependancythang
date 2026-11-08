@@ -19,6 +19,7 @@ import (
 	"github.com/thread3d/dependancythang/internal/ecosystem"
 	"github.com/thread3d/dependancythang/internal/ecosystem/semverx"
 	"github.com/thread3d/dependancythang/internal/execx"
+	"gopkg.in/yaml.v3"
 )
 
 // ---- Python -------------------------------------------------------------
@@ -432,6 +433,9 @@ func (y *Yarn) Detect(ctx context.Context, root string) ([]ecosystem.Target, err
 		if fileExists(filepath.Join(dir, "package-lock.json")) || fileExists(filepath.Join(dir, "pnpm-lock.yaml")) {
 			return nil // not the active manager
 		}
+		if isBerryLockfile(path) {
+			return nil // berry owns this file, not v1
+		}
 		targetDir := filepath.Dir(rel)
 		if targetDir == "." {
 			targetDir = "/"
@@ -549,4 +553,177 @@ func walkFor(ctx context.Context, root, name, ecosystemName string, maxDepth int
 	}
 	sort.SliceStable(targets, func(i, j int) bool { return targets[i].Manifest < targets[j].Manifest })
 	return targets, nil
+}
+
+// ---- yarn berry ---------------------------------------------------------
+
+// Berry covers yarn 2+ ("berry"), which has its own lockfile layout: a
+// `__metadata` header and descriptor keys such as `"lodash@npm:^4.17.21"`.
+//
+// It is a separate ecosystem rather than a branch inside Yarn because the two
+// formats share nothing beyond the filename; the v1 reader deliberately refuses
+// berry, and this one refuses v1, so neither can silently misread the other.
+type Berry struct{ runner execx.Runner }
+
+// NewBerry returns the yarn berry ecosystem.
+func NewBerry() *Berry { return &Berry{runner: execx.Exec{}} }
+
+// NewBerryWithRunner builds a test-friendly instance.
+func NewBerryWithRunner(r execx.Runner) *Berry { return &Berry{runner: r} }
+
+// Name implements ecosystem.Ecosystem.
+func (*Berry) Name() string { return "yarn-berry" }
+
+// isBerryLockfile reports whether a yarn.lock is berry's format.
+func isBerryLockfile(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), "__metadata")
+}
+
+// Detect finds berry lockfiles.
+func (b *Berry) Detect(ctx context.Context, root string) ([]ecosystem.Target, error) {
+	var targets []ecosystem.Target
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		if d.IsDir() {
+			if rel != "." && (strings.HasPrefix(d.Name(), ".") || d.Name() == "node_modules") {
+				return filepath.SkipDir
+			}
+			if strings.Count(rel, string(os.PathSeparator)) >= 3 {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.Name() != "yarn.lock" || !isBerryLockfile(path) {
+			return nil
+		}
+		dir := filepath.Dir(path)
+		if fileExists(filepath.Join(dir, "package-lock.json")) || fileExists(filepath.Join(dir, "pnpm-lock.yaml")) {
+			return nil
+		}
+		targetDir := filepath.Dir(rel)
+		if targetDir == "." {
+			targetDir = "/"
+		}
+		targets = append(targets, ecosystem.Target{Ecosystem: "yarn-berry", Dir: targetDir, Manifest: path})
+		return nil
+	})
+	return targets, err
+}
+
+// berryName extracts the package name from a registry descriptor such as
+// `"@scope/pkg@npm:^1.0.0"`.
+//
+// Only `@npm:` yields a name. A berry lockfile also carries `@workspace:`,
+// `@patch:`, `@link:`, and `@file:` descriptors, which name local packages rather
+// than published ones; treating those as dependencies would invent requirements
+// nobody can update. A leading `@` belongs to the scope, so the separator — not the
+// first `@` — is the split point.
+func berryName(descriptor string) string {
+	descriptor = strings.Trim(strings.TrimSpace(descriptor), `"`)
+	if i := strings.Index(descriptor, "@npm:"); i > 0 {
+		return descriptor[:i]
+	}
+	return ""
+}
+
+// berryVersions parses a berry lockfile into name→version.
+func berryVersions(text string) (map[string]string, error) {
+	var doc map[string]yaml.Node
+	if err := yaml.Unmarshal([]byte(text), &doc); err != nil {
+		return nil, fmt.Errorf("parse berry lockfile: %w", err)
+	}
+	out := map[string]string{}
+	for key, node := range doc {
+		if key == "__metadata" {
+			continue
+		}
+		var entry struct {
+			Version string `yaml:"version"`
+		}
+		if err := node.Decode(&entry); err != nil || entry.Version == "" {
+			continue
+		}
+		// A key can list several descriptors for one resolution.
+		for _, descriptor := range strings.Split(key, ",") {
+			name := berryName(descriptor)
+			if name == "" {
+				continue
+			}
+			if _, seen := out[name]; !seen {
+				out[name] = entry.Version
+			}
+		}
+	}
+	return out, nil
+}
+
+// Inventory lists packages resolved by the berry lockfile.
+func (b *Berry) Inventory(ctx context.Context, t ecosystem.Target) ([]ecosystem.Dependency, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(t.Manifest)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", t.Manifest, err)
+	}
+	locked, err := berryVersions(string(data))
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(locked))
+	for name := range locked {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	deps := make([]ecosystem.Dependency, 0, len(names))
+	for _, name := range names {
+		deps = append(deps, ecosystem.Dependency{
+			Name: name, Current: locked[name], Direct: false, Target: t.Key(),
+		})
+	}
+	return deps, nil
+}
+
+// Compare orders package versions.
+func (*Berry) Compare(a, b string) int { return semverx.Compare(a, b) }
+
+// Classify reports the update distance.
+func (*Berry) Classify(from, to string) ecosystem.UpdateClass {
+	if class := semverx.Classify(from, to); class != ecosystem.ClassUnknown {
+		return class
+	}
+	return ecosystem.ClassUnknown
+}
+
+// Apply delegates to berry's own command: `yarn up` is the berry spelling.
+func (b *Berry) Apply(ctx context.Context, dir string, changes []ecosystem.Change) (ecosystem.ApplyResult, error) {
+	res := ecosystem.ApplyResult{Observed: map[string][2]string{}}
+	for _, ch := range changes {
+		args := []string{"up", ch.Name + "@" + ch.To}
+		res.Commands = append(res.Commands, "yarn "+strings.Join(args, " "))
+		if _, err := b.runner.Run(ctx, dir, "yarn", args...); err != nil {
+			return res, err
+		}
+		res.Observed[ch.Name] = [2]string{ch.From, ch.To}
+		res.Changed = append(res.Changed, ch.Name)
+	}
+	sort.Strings(res.Changed)
+	return res, nil
+}
+
+// VerifyCommands runs the project's scripts. Berry has no --ignore-scripts at
+// apply time here because `yarn up` only rewrites the lock.
+func (*Berry) VerifyCommands(ecosystem.Target) [][]string {
+	return [][]string{{"yarn", "run", "build"}, {"yarn", "run", "test"}}
 }

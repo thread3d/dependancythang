@@ -112,6 +112,14 @@ type Ecosystem interface {
 	Apply(ctx context.Context, dir string, changes []Change) (ApplyResult, error)
 }
 
+// VersionNormalizer is implemented by ecosystems whose canonical spelling differs
+// from what an advisory database publishes. OSV writes Go fixed versions as
+// "0.44.0" while go.mod, the proxy, and every other version in depmcp's own output
+// carry "v0.44.0"; a plan that mixes the two is internally inconsistent.
+type VersionNormalizer interface {
+	NormalizeVersion(v string) string
+}
+
 // Registry returns published versions for a module path. It is separate from
 // Ecosystem because fetching is I/O and must be fakeable in tests.
 type Registry interface {

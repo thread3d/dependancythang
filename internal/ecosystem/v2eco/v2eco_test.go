@@ -223,16 +223,88 @@ func TestYarnInventory(t *testing.T) {
 	}
 }
 
-func TestYarnRefusesBerry(t *testing.T) {
-	dir := seed(t, map[string]string{
-		"yarn.lock": "__metadata:\n  version: 8\n  cacheKey: 10\n",
-	})
-	targets, err := v2eco.NewYarn().Detect(context.Background(), dir)
-	if err != nil || len(targets) != 1 {
-		t.Fatalf("Detect: %v, %d targets", err, len(targets))
+// TestYarnAndBerryAreMutuallyExclusive: v1 declines a berry lockfile and berry
+// claims it, so neither reader can silently misread the other's format.
+func TestYarnAndBerryAreMutuallyExclusive(t *testing.T) {
+	dir := seed(t, map[string]string{"yarn.lock": berryLock})
+
+	v1Targets, err := v2eco.NewYarn().Detect(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("v1 Detect: %v", err)
 	}
-	if _, err := v2eco.NewYarn().Inventory(context.Background(), targets[0]); err == nil {
-		t.Error("a yarn berry lockfile was read as if it were v1")
+	if len(v1Targets) != 0 {
+		t.Errorf("yarn v1 claimed a berry lockfile: %+v", v1Targets)
+	}
+
+	berryTargets, err := v2eco.NewBerry().Detect(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("berry Detect: %v", err)
+	}
+	if len(berryTargets) != 1 {
+		t.Fatalf("berry targets = %d, want 1", len(berryTargets))
+	}
+
+	// And the reverse: a v1 lockfile is not berry's.
+	v1dir := seed(t, map[string]string{"yarn.lock": yarnLock})
+	if targets, _ := v2eco.NewBerry().Detect(context.Background(), v1dir); len(targets) != 0 {
+		t.Error("berry claimed a v1 lockfile")
+	}
+}
+
+const berryLock = `__metadata:
+  version: 8
+  cacheKey: 10
+
+"lodash@npm:^4.17.20, lodash@npm:^4.17.21":
+  version: 4.17.21
+  resolution: "lodash@npm:4.17.21"
+  checksum: 10/abc
+  languageName: node
+  linkType: hard
+
+"@scope/pkg@npm:^2.0.0":
+  version: 2.3.0
+  resolution: "@scope/pkg@npm:2.3.0"
+  languageName: node
+  linkType: hard
+
+"my-workspace@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "my-workspace@workspace:."
+  languageName: unknown
+  linkType: soft
+`
+
+func TestBerryInventory(t *testing.T) {
+	dir := seed(t, map[string]string{"yarn.lock": berryLock})
+	deps := inventory(t, v2eco.NewBerry(), dir)
+
+	if got := deps["lodash"].Current; got != "4.17.21" {
+		t.Errorf("lodash = %q, want 4.17.21 from a multi-descriptor key", got)
+	}
+	// A scoped name keeps its leading @; the descriptor separator is not a split point.
+	if got := deps["@scope/pkg"].Current; got != "2.3.0" {
+		t.Errorf("@scope/pkg = %q, want 2.3.0", got)
+	}
+	// A workspace entry is not a registry package.
+	if _, ok := deps["my-workspace"]; ok {
+		t.Error("a workspace descriptor was inventoried as a dependency")
+	}
+	if len(deps) != 2 {
+		t.Errorf("deps = %d (%v), want 2", len(deps), deps)
+	}
+}
+
+func TestBerryApplyUsesYarnUp(t *testing.T) {
+	dir := seed(t, map[string]string{"yarn.lock": berryLock})
+	runner := &fakeRunner{}
+	if _, err := v2eco.NewBerryWithRunner(runner).Apply(context.Background(), dir, []ecosystem.Change{
+		{Name: "lodash", From: "4.17.21", To: "4.17.22"},
+	}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(runner.commands) != 1 || !strings.Contains(runner.commands[0], "yarn up lodash@4.17.22") {
+		t.Errorf("commands = %v, want berry's `yarn up`", runner.commands)
 	}
 }
 

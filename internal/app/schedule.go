@@ -141,7 +141,23 @@ func (s *Service) RunOnce(ctx context.Context, repoRef string, _ RunOptions) (Ru
 		return out, rerr
 	}
 	out.Summary = fmt.Sprintf("%d change(s) applied on %s and verified", plan.TotalChanges, run.Branch)
-	if !s.Cfg.Defaults.AutoPR {
+	if s.Cfg.Defaults.AutoPR {
+		// auto_pr exists so an unattended run can finish the job. A publish failure
+		// is reported but does not count against the repository: it is usually a
+		// token or a remote problem, and suspending on it would hide the branch
+		// that is already sitting there verified.
+		pub, perr := s.OpenPullRequest(ctx, PublishRequest{RunID: run.RunID})
+		switch {
+		case perr != nil:
+			out.Summary += fmt.Sprintf("; publishing failed: %v", perr)
+		case pub.PR.URL != "":
+			out.Summary += fmt.Sprintf("; published via %s (%s)", pub.Forge, pub.PR.URL)
+		case pub.PR.Report != "":
+			out.Summary += fmt.Sprintf("; report written to %s", pub.PR.Report)
+		default:
+			out.Summary += fmt.Sprintf("; published via %s", pub.Forge)
+		}
+	} else {
 		out.Summary += "; no pull request (auto_pr is false)"
 	}
 	out.Notified = s.notifyRun(ctx, notify.Message{

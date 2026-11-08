@@ -748,18 +748,22 @@ func runFaults(ctx context.Context, args []string) error {
 	}
 	defer svc.Close()
 
-	entries, dir, err := svc.ListFaults(ctx, *repo, *all)
+	entries, dir, err := svc.ListFaults(ctx, *repo)
 	if err != nil {
 		return err
 	}
 	open := 0
+	shown := make([]faults.Entry, 0, len(entries))
 	for _, e := range entries {
 		if !e.Resolved {
 			open++
 		}
+		if *all || !e.Resolved {
+			shown = append(shown, e)
+		}
 	}
 	return emitJSON(map[string]any{
-		"journal": dir, "open": open, "total": len(entries), "faults": entries,
+		"journal": dir, "open": open, "total": len(entries), "faults": shown,
 	})
 }
 

@@ -28,7 +28,7 @@ func registerForgeTools(s *mcp.Server, svc *app.Service) {
 		Pushed bool      `json:"pushed"`
 		PR     prRefOut  `json:"pr"`
 	}
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name: "open_pull_request",
 		Description: "Publish a verified branch and open a pull request through the configured forge. " +
 			"Refuses any run that has not passed verification.",
@@ -55,7 +55,7 @@ func registerForgeTools(s *mcp.Server, svc *app.Service) {
 	type importOut struct {
 		Result dependabot.Result `json:"result"`
 	}
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name:        "import_dependabot",
 		Description: "Read .github/dependabot.yml and report how it maps onto depmcp configuration. Writes nothing.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: ptr(false)},

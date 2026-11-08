@@ -27,7 +27,7 @@ func registerWriteTools(s *mcp.Server, svc *app.Service) {
 	type runOut struct {
 		Run store.Run `json:"run"`
 	}
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name: "apply_plan",
 		Description: "Create a worktree and branch from the default branch, apply the plan there, and commit. " +
 			"Never touches your working tree. Re-validates the plan against the registry first.",
@@ -58,7 +58,7 @@ func registerWriteTools(s *mcp.Server, svc *app.Service) {
 		Run    store.Run     `json:"run"`
 		Result verify.Result `json:"result"`
 	}
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name: "verify_run",
 		Description: "Build and test a run's branch inside the sandbox, with no network and no credentials. " +
 			"A failing verification is what blocks a bad update.",
@@ -77,7 +77,7 @@ func registerWriteTools(s *mcp.Server, svc *app.Service) {
 	type revertIn struct {
 		RunID string `json:"run_id" jsonschema:"run id returned by apply_plan"`
 	}
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name:        "revert_run",
 		Description: "Delete a run's branch and worktree. A merged or closed run is terminal and is only reported.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: ptr(true), IdempotentHint: true, OpenWorldHint: ptr(false)},
@@ -98,7 +98,7 @@ func registerWriteTools(s *mcp.Server, svc *app.Service) {
 		Runs  []store.Run `json:"runs"`
 		Total int         `json:"total"`
 	}
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name:        "list_runs",
 		Description: "Recent apply runs with their branches, worktrees, and status.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: ptr(false)},
@@ -114,7 +114,7 @@ func registerWriteTools(s *mcp.Server, svc *app.Service) {
 	type getRunIn struct {
 		RunID string `json:"run_id" jsonschema:"run id"`
 	}
-	mcp.AddTool(s, &mcp.Tool{
+	addTool(s, svc, &mcp.Tool{
 		Name:        "get_run",
 		Description: "One run record, including its branch, worktree, commit, and status.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, IdempotentHint: true, OpenWorldHint: ptr(false)},
