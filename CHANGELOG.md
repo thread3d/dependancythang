@@ -6,8 +6,9 @@ milestones in [the specification](specs/Local%20Dependency%20Updater%20MCP%20Ser
 
 ## [Unreleased]
 
-Two defects a run on rMath exposed, both of which made depmcp refuse its own
-output.
+Defects a run on rMath exposed, and the one found while fixing them: two of the
+three made depmcp refuse its own output, and the third let it apply a plan to a
+tree the plan was not built from.
 
 ### Fixed
 - **A plan depmcp built was rejected with `PLAN_STALE`.** `apply_plan` failed on a
@@ -31,6 +32,36 @@ output.
   `index out of range`. Via MCP that surfaced as `INTERNAL_ERROR`; via the CLI it
   was a panic. An empty plan is now stored with an empty target row and
   `apply_plan` reports `NOTHING_TO_APPLY`.
+
+- **A plan could be applied to a tree it was not built from, silently.** The
+  Actions, Docker and Maven appliers rewrote whatever ref or version they found,
+  so a plan built from one tree and applied to a moved base branch rewrote the
+  wrong versions and committed a message describing a change that never happened:
+  a plan reading `actions/checkout v4 -> v7.0.1` against a branch already on `v7`
+  pinned the `v7` lines to the `v7.0.1` SHA and said `v4 -> v7.0.1`.
+
+  Those appliers now apply a change only to a line that still holds the plan's
+  from-version, and refuse the plan with `PLAN_STALE` — naming what the branch
+  actually holds — when it holds anything else, writing nothing. A line already at
+  the planned target counts as satisfied, so one plan still covers every workflow
+  file in the directory.
+
+  `apply_plan` also cross-checks the applier's report before committing: a planned
+  change the applier never reported, or reported starting from a different
+  version, is `PLAN_STALE` rather than a commit that lists it. Appliers keep the
+  run honest in the other direction too — `ApplyResult.Skipped` says what was
+  declined and why (Maven's property-indirected and centrally managed versions),
+  and both the run detail and the commit body list it instead of pretending it
+  landed.
+
+### Known limitations
+- **`apply_plan` gives every group the repository root, not the group's target.** A
+  plan for a sub-module manifest (`svc/go.mod`, `web/Dockerfile`, a second
+  `pom.xml`) therefore edits the root file — or, with the checks above, is
+  refused. Recorded as `DEP-C1D642B4`.
+- **Cargo, Yarn, Berry and Python's delegated paths record the request as the
+  observation** rather than reading the lockfile back, so for those ecosystems the
+  cross-check has nothing to compare against. Recorded as `DEP-445BAE19`.
 
 ## [0.9.1] — 2026-11-07
 

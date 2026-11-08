@@ -4,17 +4,28 @@ Generated from `issues.jsonl` and `resolved.jsonl`; do not edit by hand.
 Read the open entries, fix them, then record a resolution with `depmcp faults resolve <id>`.
 A fault seen again after its resolution reopens automatically.
 
-1 open, 7 resolved.
+2 open, 8 resolved.
 
-## DEP-D516B032 — the actions applier rewrites any ref, so a plan built from the working tree can be applied to a different base and the commit states the wrong from-version
+## DEP-445BAE19 — the delegated appliers record the requested change as the observation
 
-- kind: `friction` · severity: `note` · seen 1 time(s)
-- first: 2026-11-08T12:54:13.524752813Z · last: 2026-11-08T12:54:13.524752813Z
+- kind: `tool-failure` · severity: `bug` · seen 1 time(s)
+- first: 2026-11-08T13:01:27.500456236Z · last: 2026-11-08T13:01:27.500456236Z
 - command: `faults add`
-- **fix:** Either make the actions applier honour Change.From and report the lines it actually changed, or build the plan from the same fetched default branch apply will use, so Observed and the commit message describe the diff that was really produced.
+- **fix:** Read the manifest or lockfile back after the toolchain runs, the way nodejs and gomod already do, so Observed is a measurement rather than an echo of the request.
 
 ```
-Verification of the PLAN_STALE fix: the plan was built from a working tree where both workflows pinned actions/checkout@v4, while the clone's default branch still had @v7. Apply based the run on the default branch, the applier matched the action by name and rewrote the v7 lines to the v7.0.1 SHA, and the commit message read 'actions/checkout v4 -> v7.0.1 (major)' with Observed reporting v7 as the from-version. The rewritten file is a correct hardened pin, but the record of it is wrong.
+v2eco Python's delegated path (pip/uv/poetry), and Cargo/Yarn/Berry, set res.Observed[ch.Name] = {ch.From, ch.To} straight from the change instead of reading the lockfile back. gomod and nodejs do read back. Consequence: a toolchain that resolved something other than what was asked is invisible in the run record, and the apply-boundary check added for DEP-D516B032 cannot catch a version disagreement for those ecosystems, because the observation always matches the plan by construction.
+```
+
+## DEP-C1D642B4 — apply ignores a group's target, so a plan for a sub-module manifest is applied to the repository root
+
+- kind: `tool-failure` · severity: `bug` · seen 1 time(s)
+- first: 2026-11-08T13:01:25.593910655Z · last: 2026-11-08T13:01:25.593910655Z
+- command: `faults add`
+- **fix:** Give the applier the target it is working on: either pass the target's directory as dir (with an ecosystem-level rule for ecosystems whose Apply already means the whole repository, such as the workflows directory) or add ApplyIn(ctx, root, target, changes) to the interface.
+
+```
+applyGroups calls ecosystem.Apply(ctx, run.Worktree, changes) for every group, so dir is always the repository root while gomod.Apply reads filepath.Join(dir, go.mod). A plan built from a monorepo with go.mod in the root and in svc/ therefore runs go get for both groups against the root go.mod: the sub-module change either lands in the wrong file or, now that appliers verify the from-ref, is refused as PLAN_STALE. The same blindness affects docker (a plan for web/Dockerfile) and maven (any second pom). Found while fixing DEP-D516B032; the plan side now allows two targets to share a dependency and version, which makes this reachable more often.
 ```
 
 ## Resolved
@@ -26,3 +37,4 @@ Verification of the PLAN_STALE fix: the plan was built from a working tree where
 - DEP-9D45551D — yarn berry is refused rather than supported (resolved 2026-11-08T08:54:00.380526834Z: v2eco.Berry reads a berry lockfile (__metadata, @npm: descriptors, multi-descriptor keys) with yarn up for apply; yarn v1 now declines berry files so the two never misread each other)
 - DEP-9DE3A533 — scheduled runs ignore auto_pr (resolved 2026-11-08T08:54:00.368905871Z: RunOnce now publishes through the configured forge when defaults.auto_pr is true, reporting the PR url or the local report path; tested in internal/app/autopr_test.go)
 - DEP-B8A77617 — advisory target version is recorded without the v prefix (resolved 2026-11-08T08:54:00.356896Z: ecosystem.VersionNormalizer added; gomod implements it and PlanUpdates normalizes every decision's target, so an advisory fix reads v0.44.0)
+- DEP-D516B032 — the actions applier rewrites any ref, so a plan built from the working tree can be applied to a different base and the commit states the wrong from-version (resolved 2026-11-08T13:01:23.188500821Z: The hand-editing appliers now apply a planned change only to a line that still holds the plan's from-ref, and refuse the plan when a manifest holds anything else: actions, docker and maven return ecosystem.PlanMismatchError before writing, which the write path maps to PLAN_STALE. A ref that already holds the planned target counts as satisfied, so one plan still covers two workflow files. applyIntoWorktree additionally cross-checks every planned change against the ApplyResult (Observed, or a reason in the new ApplyResult.Skipped), so an applier that reports success without moving anything is refused too; maven reports its property-indirection and managed-version declines in Skipped and the commit says what did not land. Tested in internal/ecosystem/{actions,docker,maven} and internal/app/writepath_test.go; verified end to end against a clone of rMath: a plan stored against v4 refs applied to a branch now holding v7 fails with PLAN_STALE naming each ref, and re-planning then applying pins all three actions.)
