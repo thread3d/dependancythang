@@ -24,6 +24,26 @@ crates.io), and `flask` correctly reporting no current version for a range
 constraint. Inventory on the same repository now lists exactly its three real
 dependencies.
 
+## [0.9.2] — 2026-11-08
+
+A bug depmcp found in itself while being dogfooded as an MCP server.
+
+### Fixed
+- **Advisory fixes were silently dropped for Go.** OSV publishes Go fixed
+  versions without the leading `v` (`0.44.0`), while `go.mod` and the module proxy
+  always carry one (`v0.41.0`). `x/mod/semver` rejects both spellings of the
+  mismatch, so the comparison always said "not newer" and the plan omitted the
+  fix. `gomod.Compare` and `Classify` now normalize the prefix.
+
+  Dogfooding surfaced this: `GO-2026-5024` affects `golang.org/x/sys v0.41.0` in
+  `spike/mcp-probe`, and before the fix the plan proposed only the sqlite bump.
+  After it, the plan proposes both, with the advisory id attached.
+
+### Changed
+- Documentation says nineteen MCP tools, which is what the server reports. The
+  earlier "twenty" was a miscount in prose; the specification's target of 22
+  tools still includes three that belong to the forge milestone's remainder.
+
 ## [Unreleased]
 
 ### Planned
@@ -124,7 +144,7 @@ The M6 milestone: depmcp can publish, and it can read a dependabot.yml.
   `explain_breaking_change`, and `weekly_digest`. They are written as instructions
   over tool results, so they cannot invent findings, and they say explicitly that
   release notes are untrusted and that an unscored advisory is not a low one.
-- Twenty MCP tools and four prompts.
+- Nineteen MCP tools and four prompts.
 
 ### Fixed
 - Forge tokens were about to be asserted in a shared test handler, which would

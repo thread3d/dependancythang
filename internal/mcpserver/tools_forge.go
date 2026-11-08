@@ -7,6 +7,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/thread3d/dependancythang/internal/app"
+	"github.com/thread3d/dependancythang/internal/dependabot"
+	"github.com/thread3d/dependancythang/internal/store"
 )
 
 // registerForgeTools adds the M6 publishing surface.
@@ -14,11 +16,17 @@ func registerForgeTools(s *mcp.Server, svc *app.Service) {
 	type publishIn struct {
 		RunID string `json:"run_id" jsonschema:"run id of a verified run"`
 	}
+	type prRefOut struct {
+		Forge  string `json:"forge"`
+		Number int    `json:"number,omitempty"`
+		URL    string `json:"url,omitempty"`
+		Report string `json:"report,omitempty"`
+	}
 	type publishOut struct {
-		Run    any            `json:"run"`
-		Forge  string         `json:"forge"`
-		Pushed bool           `json:"pushed"`
-		PR     map[string]any `json:"pr"`
+		Run    store.Run `json:"run"`
+		Forge  string    `json:"forge"`
+		Pushed bool      `json:"pushed"`
+		PR     prRefOut  `json:"pr"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "open_pull_request",
@@ -34,7 +42,10 @@ func registerForgeTools(s *mcp.Server, svc *app.Service) {
 			map[string]any{"run_id": in.RunID, "forge": res.Forge}, nil, "")
 		return nil, publishOut{
 			Run: res.Run, Forge: res.Forge, Pushed: res.Pushed,
-			PR: map[string]any{"number": res.PR.Number, "url": res.PR.URL, "report": res.PR.Report},
+			PR: prRefOut{
+				Forge: res.PR.Forge, Number: res.PR.Number,
+				URL: res.PR.URL, Report: res.PR.Report,
+			},
 		}, nil
 	})
 
@@ -42,7 +53,7 @@ func registerForgeTools(s *mcp.Server, svc *app.Service) {
 		Repository string `json:"repository" jsonschema:"repository id or path whose .github/dependabot.yml should be read"`
 	}
 	type importOut struct {
-		Result any `json:"result"`
+		Result dependabot.Result `json:"result"`
 	}
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "import_dependabot",

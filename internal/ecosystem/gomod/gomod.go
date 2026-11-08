@@ -147,10 +147,28 @@ func (e *Ecosystem) Inventory(ctx context.Context, t ecosystem.Target) ([]ecosys
 }
 
 // Compare orders versions with Go's own semver rules.
-func (*Ecosystem) Compare(a, b string) int { return semver.Compare(a, b) }
+//
+// OSV publishes Go fixed versions without the leading "v" ("0.44.0"), while
+// go.mod and the module proxy always carry one ("v0.41.0"). Comparing the two
+// forms directly makes x/mod/semver reject both, which silently hid advisory
+// fixes, so both sides are normalized first.
+func (*Ecosystem) Compare(a, b string) int { return semver.Compare(normalizeV(a), normalizeV(b)) }
+
+// normalizeV ensures a Go version carries the "v" prefix x/mod/semver requires.
+func normalizeV(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || strings.HasPrefix(v, "v") {
+		return v
+	}
+	if v[0] >= '0' && v[0] <= '9' {
+		return "v" + v
+	}
+	return v
+}
 
 // Classify reports the semver distance, using Go module semantics.
 func (*Ecosystem) Classify(from, to string) ecosystem.UpdateClass {
+	from, to = normalizeV(from), normalizeV(to)
 	if !semver.IsValid(from) || !semver.IsValid(to) {
 		return ecosystem.ClassUnknown
 	}

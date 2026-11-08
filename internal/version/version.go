@@ -6,7 +6,7 @@ import "fmt"
 
 // Injected at build time; the defaults describe a plain `go build`.
 var (
-	Version = "0.9.1"
+	Version = "0.9.2"
 	Commit  = "dev"
 	Date    = "unknown"
 )

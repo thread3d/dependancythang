@@ -63,7 +63,7 @@ Register it with an MCP client (example: Claude Code):
 claude mcp add depmcp ~/.local/bin/depmcp serve
 ```
 
-Tools (20): `list_repositories`, `add_repository`, `update_repository`,
+Tools (19): `list_repositories`, `add_repository`, `update_repository`,
 `remove_repository`, `get_config`, `validate_config`, `status`,
 `scan_dependencies`, `check_updates`, `check_vulnerabilities`, `plan_updates`,
 `get_plan`, `apply_plan`, `verify_run`, `revert_run`, `list_runs`, `get_run`,
