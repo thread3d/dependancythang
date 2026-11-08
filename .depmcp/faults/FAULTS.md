@@ -4,7 +4,7 @@ Generated from `issues.jsonl` and `resolved.jsonl`; do not edit by hand.
 Read the open entries, fix them, then record a resolution with `depmcp faults resolve <id>`.
 A fault seen again after its resolution reopens automatically.
 
-3 open, 8 resolved.
+3 open, 9 resolved.
 
 ## DEP-5E2E25AF — the plan is built from the working tree while apply bases on the default branch
 
@@ -41,6 +41,7 @@ applyGroups calls ecosystem.Apply(ctx, run.Worktree, changes) for every group, s
 
 ## Resolved
 
+- DEP-AE750560 — plan_updates reports an unreachable registry as nothing to update (resolved 2026-11-08T13:03:58.778803014Z: PlanUpdates returns registryUnavailable(...) when reg.Versions fails: REGISTRY_UNAVAILABLE, or OFFLINE_CACHE_MISS when the error wraps httpcache.ErrOfflineCacheMiss (a sentinel added for this, previously the code existed but nothing produced it). Tested in internal/app/readpath_test.go)
 - DEP-E52DB5F0 — plan_updates panics when the plan has no groups (resolved 2026-11-08T12:53:42.170236767Z: PlanUpdates stores an empty plan with an empty target row through firstTarget instead of indexing plan.Groups[0]; apply_plan then reports NOTHING_TO_APPLY. Tested in internal/app/readpath_empty_test.go)
 - DEP-4B802954 — a plan depmcp built itself is rejected as PLAN_STALE because the duplicate-change check ignores the target (resolved 2026-11-08T12:53:42.158070591Z: ScanDependencies keeps one dependency per (target, name) and writes a target's snapshot once, so two workflow files pinning one action no longer become two changes; planner.Validate identifies a change by (target, dependency, version), so a plan for two go.mod files is no longer a duplicate either, while the same change twice for one target is still refused. rMath's plan now has 3 changes instead of 4 and applies; tested in internal/app/readpath_test.go, internal/app/writepath_test.go and internal/planner/planner_test.go)
 - DEP-435CC37F — OSV fixed versions without a v prefix were dropped by policy (resolved 2026-11-08T06:51:42.207263797Z: fixed in v0.9.2 by normalizing the v prefix in gomod.Compare and Classify)

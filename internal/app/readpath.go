@@ -20,6 +20,7 @@ import (
 	"github.com/thread3d/dependancythang/internal/ecosystem/maven"
 	"github.com/thread3d/dependancythang/internal/ecosystem/nodejs"
 	"github.com/thread3d/dependancythang/internal/ecosystem/v2eco"
+	"github.com/thread3d/dependancythang/internal/httpcache"
 	"github.com/thread3d/dependancythang/internal/planner"
 	"github.com/thread3d/dependancythang/internal/policy"
 	"github.com/thread3d/dependancythang/internal/registry"
@@ -79,6 +80,16 @@ func ecosystemOfTarget(target string) string {
 		return target[:i]
 	}
 	return "gomod"
+}
+
+// registryUnavailable turns a failed candidate lookup into the stable code a
+// caller can act on: OFFLINE_CACHE_MISS when the client was offline and the
+// response was never cached, REGISTRY_UNAVAILABLE for everything else (§7).
+func registryUnavailable(what string, err error) error {
+	if errors.Is(err, httpcache.ErrOfflineCacheMiss) {
+		return coded(CodeOfflineCacheMiss, fmt.Errorf("%s: %w", what, err))
+	}
+	return coded(CodeRegistryUnavailable, fmt.Errorf("%s: %w", what, err))
 }
 
 // tagRegistry adapts a tag Source to the registry shape policy expects.
@@ -484,9 +495,14 @@ func (s *Service) PlanUpdates(ctx context.Context, repoRef string) (planner.Plan
 			reg = r
 		}
 		in := policy.Input{Dep: d, Classify: eco.Classify, Compare: eco.Compare}
-		if versions, verr := reg.Versions(ctx, d.Name); verr == nil {
-			in.Candidates = versions
+		versions, verr := reg.Versions(ctx, d.Name)
+		if verr != nil {
+			// Without candidates there is no plan, and an empty plan reads as
+			// "everything is current" — the most misleading answer an updater can
+			// give. A registry that cannot be reached is a refusal, not a result.
+			return planner.Plan{}, registryUnavailable("resolving "+d.Name, verr)
 		}
+		in.Candidates = versions
 		if advisories, aerr := osvc.QueryBatch(ctx, []advisory.Query{{
 			Ecosystem: "Go", Name: d.Name, Version: d.Current,
 		}}); aerr == nil && len(advisories) == 1 {

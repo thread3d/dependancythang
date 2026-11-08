@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thread3d/dependancythang/internal/app"
 	"github.com/thread3d/dependancythang/internal/ecosystem"
 	"github.com/thread3d/dependancythang/internal/ecosystem/gomod"
+	"github.com/thread3d/dependancythang/internal/httpcache"
 	"github.com/thread3d/dependancythang/internal/planner"
 	"github.com/thread3d/dependancythang/internal/policy"
 )
@@ -137,5 +140,58 @@ func TestPlanForTwoGoModFilesIsNotRejected(t *testing.T) {
 	plan.Groups[1].Changes[0].Target = plan.Groups[0].Target
 	if problems := planner.Validate(plan, time.Now()); len(problems) == 0 {
 		t.Error("a duplicate change inside one target was accepted")
+	}
+}
+
+// failingRegistry stands in for a registry that cannot be reached, which is what a
+// rate-limited GitHub API looks like from here.
+type failingRegistry struct{ err error }
+
+func (f *failingRegistry) Versions(context.Context, string) ([]ecosystem.Version, error) {
+	return nil, f.err
+}
+
+func (f *failingRegistry) PublishTime(context.Context, string, string) (string, error) {
+	return "", nil
+}
+
+// TestPlanRefusesWhenTheRegistryCannotBeReached is the regression for a plan that
+// silently described an unreachable registry as "nothing to update". A real case:
+// api.github.com answered 403 for every tag lookup, and plan_updates returned a
+// zero-change plan instead of saying so.
+func TestPlanRefusesWhenTheRegistryCannotBeReached(t *testing.T) {
+	ctx := context.Background()
+	repoPath := gitRepoWithoutManifests(t)
+	if err := os.WriteFile(filepath.Join(repoPath, "go.mod"),
+		[]byte("module example.com/victim\n\ngo 1.25\n\nrequire example.com/dep v1.0.0\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	cmd := exec.Command("git", "add", "-A")
+	cmd.Dir = repoPath
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v: %s", err, out)
+	}
+	commit := exec.Command("git", "commit", "-qm", "depend on one module")
+	commit.Dir = repoPath
+	if out, err := commit.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v: %s", err, out)
+	}
+
+	svc := newService(t, repoPath)
+	svc.Registry = &failingRegistry{err: errors.New("unexpected status 403 Forbidden")}
+
+	if _, err := svc.PlanUpdates(ctx, repoPath); err == nil {
+		t.Fatal("a plan was produced from a registry that could not be reached")
+	} else if got := app.CodeOf(err); got != "REGISTRY_UNAVAILABLE" {
+		t.Errorf("code = %q, want REGISTRY_UNAVAILABLE (%v)", got, err)
+	}
+
+	// Offline with nothing cached is a different answer, and the caller can act on
+	// it: come back online rather than retry.
+	svc.Registry = &failingRegistry{err: fmt.Errorf("tags: %w", httpcache.ErrOfflineCacheMiss)}
+	if _, err := svc.PlanUpdates(ctx, repoPath); err == nil {
+		t.Fatal("an offline cache miss produced a plan")
+	} else if got := app.CodeOf(err); got != "OFFLINE_CACHE_MISS" {
+		t.Errorf("code = %q, want OFFLINE_CACHE_MISS (%v)", got, err)
 	}
 }

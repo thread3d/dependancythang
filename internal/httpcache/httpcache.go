@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,12 @@ import (
 	"path/filepath"
 	"time"
 )
+
+// ErrOfflineCacheMiss reports that a request could not be served because the
+// client is offline and the response was never cached. It is a distinct condition
+// from a network failure: the caller can tell a user to come back online rather
+// than to retry, and maps it to OFFLINE_CACHE_MISS (§7).
+var ErrOfflineCacheMiss = errors.New("offline and no cached response")
 
 // DefaultTTL is how long a response is trusted before revalidation.
 const DefaultTTL = 6 * time.Hour
@@ -131,7 +138,7 @@ func (c *Client) Get(ctx context.Context, url string) (string, error) {
 		if have {
 			return cached.Body, nil
 		}
-		return "", fmt.Errorf("offline and no cached response for %s", url)
+		return "", fmt.Errorf("%w for %s", ErrOfflineCacheMiss, url)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -172,7 +179,7 @@ func (c *Client) Post(ctx context.Context, url string, payload []byte) (string, 
 		if have {
 			return cached.Body, nil
 		}
-		return "", fmt.Errorf("offline and no cached response for %s", url)
+		return "", fmt.Errorf("%w for %s", ErrOfflineCacheMiss, url)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))

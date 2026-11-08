@@ -6,9 +6,9 @@ milestones in [the specification](specs/Local%20Dependency%20Updater%20MCP%20Ser
 
 ## [Unreleased]
 
-Defects a run on rMath exposed, and the one found while fixing them: two of the
-three made depmcp refuse its own output, and the third let it apply a plan to a
-tree the plan was not built from.
+Defects a run on rMath exposed, and the ones found while fixing them: three made
+depmcp give a wrong answer about a plan, and one let it apply a plan to a tree the
+plan was not built from.
 
 ### Fixed
 - **A plan depmcp built was rejected with `PLAN_STALE`.** `apply_plan` failed on a
@@ -54,6 +54,14 @@ tree the plan was not built from.
   and both the run detail and the commit body list it instead of pretending it
   landed.
 
+- **`plan_updates` reported an unreachable registry as "nothing to update".** A
+  failed candidate lookup left the decision with no candidates, so the plan came
+  back empty — the CLI printed a zero-change plan while `check_updates` was
+  showing `403 Forbidden` per dependency (a rate-limited `api.github.com`, in the
+  case that found this). A registry that cannot answer is now a refusal:
+  `REGISTRY_UNAVAILABLE`, or `OFFLINE_CACHE_MISS` when the client is offline and
+  the response was never cached.
+
 ### Known limitations
 - **`apply_plan` gives every group the repository root, not the group's target.** A
   plan for a sub-module manifest (`svc/go.mod`, `web/Dockerfile`, a second
@@ -62,6 +70,11 @@ tree the plan was not built from.
 - **Cargo, Yarn, Berry and Python's delegated paths record the request as the
   observation** rather than reading the lockfile back, so for those ecosystems the
   cross-check has nothing to compare against. Recorded as `DEP-445BAE19`.
+- **`plan_updates` reads the working tree; `apply_plan` branches from the default
+  branch.** A repository whose checked-out branch is ahead of `origin/main` plans
+  one set of versions and applies against another, which the checks above now
+  refuse rather than mis-commit — a dead end until the two agree. Recorded as
+  `DEP-5E2E25AF`.
 
 ## [0.9.1] — 2026-11-07
 
