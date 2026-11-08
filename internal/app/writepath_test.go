@@ -450,3 +450,76 @@ func firstGroupTarget(plan planner.Plan) string {
 	}
 	return ""
 }
+
+// TestApplyPlanRefusesAPlanBuiltFromAnotherTree is the regression for
+// DEP-D516B032 at the boundary the user sees: the plan names checkout v4 and the
+// branch holds v7, so applying must fail closed instead of pinning the v7 lines to
+// the planned SHA and recording a v4 -> v7.0.1 change that never happened.
+func TestApplyPlanRefusesAPlanBuiltFromAnotherTree(t *testing.T) {
+	ctx := context.Background()
+	const action, plannedFrom, plannedTo = "actions/checkout", "v4", "v7.0.1"
+	repoPath := workflowRepo(t, action, "v7", "ci.yml", "lean.yml")
+	svc := newService(t, repoPath)
+	svc.Registry = &fakeRegistry{versions: map[string][]ecosystem.Version{
+		action: {{Raw: plannedTo, PublishedAt: time.Now().Add(-48 * time.Hour).Format(time.RFC3339)}},
+	}}
+
+	plan := planner.Plan{
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		RepoID:    config.RepoID(repoPath),
+		Groups: []planner.Group{{
+			Name: "default", Ecosystem: "actions", Target: "actions:/.github/workflows",
+			Changes: []planner.Change{{
+				Dependency: action, From: plannedFrom, To: plannedTo,
+				Class: ecosystem.ClassPin, Direct: true, Target: "actions:/.github/workflows",
+			}},
+		}},
+		TotalChanges: 1,
+	}
+	plan.PlanID = "drifted-" + plannedTo
+	if err := svc.Store.SavePlan(ctx, plan.PlanID, config.RepoID(repoPath), "actions:/.github/workflows", "actions", time.Now(), mustJSON(t, plan)); err != nil {
+		t.Fatalf("save plan: %v", err)
+	}
+
+	run, err := svc.ApplyPlan(ctx, plan.PlanID, true)
+	if err == nil {
+		t.Fatal("a plan built from another tree was applied")
+	}
+	if got := app.CodeOf(err); got != app.CodePlanStale {
+		t.Errorf("code = %q, want %q (%v)", got, app.CodePlanStale, err)
+	}
+	if !strings.Contains(err.Error(), "v7") {
+		t.Errorf("the refusal does not say what the branch holds: %v", err)
+	}
+	if run.Status != store.StatusFailed {
+		t.Errorf("run status = %q, want %q", run.Status, store.StatusFailed)
+	}
+	if strings.Contains(branchList(t, repoPath), "depmcp/") {
+		t.Error("a branch was left behind for a plan that was not applied")
+	}
+}
+
+// TestApplyPlanRefusesAnApplierThatDidNothing covers the same rule for an applier
+// that reports success without moving anything: the plan lists a change, so the
+// commit must not claim it.
+func TestApplyPlanRefusesAnApplierThatDidNothing(t *testing.T) {
+	ctx := context.Background()
+	const module, from, to = "example.com/dep", "v1.0.0", "v1.1.0"
+	repoPath := gitRepo(t, module, from)
+	svc := newService(t, repoPath)
+	svc.Registry = &fakeRegistry{versions: map[string][]ecosystem.Version{
+		module: {{Raw: to, PublishedAt: time.Now().Add(-48 * time.Hour).Format(time.RFC3339)}},
+	}}
+	svc.Apply = func(context.Context, string, []ecosystem.Change) (ecosystem.ApplyResult, error) {
+		return ecosystem.ApplyResult{Observed: map[string][2]string{}, Changed: []string{module}}, nil
+	}
+
+	plan := seedPlan(t, svc, repoPath, module, from, to)
+	_, err := svc.ApplyPlan(ctx, plan.PlanID, true)
+	if got := app.CodeOf(err); got != app.CodePlanStale {
+		t.Fatalf("code = %q, want %q (%v)", got, app.CodePlanStale, err)
+	}
+	if strings.Contains(branchList(t, repoPath), "depmcp/") {
+		t.Error("a branch was left behind for a change that never happened")
+	}
+}

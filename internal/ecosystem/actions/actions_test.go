@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thread3d/dependancythang/internal/ecosystem"
@@ -170,5 +171,129 @@ func TestClassifyRefs(t *testing.T) {
 		if got := eco.Classify(tc.from, tc.to); got != tc.want {
 			t.Errorf("Classify(%q,%q) = %q, want %q", tc.from, tc.to, got, tc.want)
 		}
+	}
+}
+
+// seedWorkflows writes one workflow file per name and returns the repository root.
+func seedWorkflows(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, ".github", "workflows")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("seed %s: %v", name, err)
+		}
+	}
+	return root
+}
+
+func readWorkflowFile(t *testing.T, root, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, ".github", "workflows", name))
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	return string(data)
+}
+
+// TestApplyHonoursThePlannedFromRef is the regression for DEP-D516B032: the
+// applier rewrote any ref it found, so a plan built from another tree produced a
+// diff nobody reviewed and a record of a change that never happened.
+func TestApplyHonoursThePlannedFromRef(t *testing.T) {
+	const planned = `jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v4
+`
+	const drifted = `jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v5
+`
+	root := seedWorkflows(t, map[string]string{"ci.yml": planned, "lean.yml": drifted})
+
+	res, err := actions.New().Apply(context.Background(), root, []ecosystem.Change{
+		{Name: "actions/checkout", From: "v4", To: "v5"},
+	})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if got := readWorkflowFile(t, root, "ci.yml"); !strings.Contains(got, "actions/checkout@v5") {
+		t.Errorf("the planned line was not bumped:\n%s", got)
+	}
+	if got := readWorkflowFile(t, root, "lean.yml"); got != drifted {
+		t.Errorf("a line the plan did not predict was rewritten:\n%s", got)
+	}
+	if len(res.Changed) != 1 || res.Changed[0] != "actions/checkout" {
+		t.Errorf("changed = %v, want one", res.Changed)
+	}
+	if got := res.Observed["actions/checkout"]; got != [2]string{"v4", "v5"} {
+		t.Errorf("observed = %v, want v4 -> v5", got)
+	}
+}
+
+// TestApplyRefusesARefThePlanDidNotPredict covers the reported shape: the tree
+// holds a different ref than the plan was built against, so nothing is written and
+// the caller learns what the branch actually has.
+func TestApplyRefusesARefThePlanDidNotPredict(t *testing.T) {
+	const body = `jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v7
+`
+	root := seedWorkflows(t, map[string]string{"ci.yml": body})
+
+	res, err := actions.New().Apply(context.Background(), root, []ecosystem.Change{
+		{Name: "actions/checkout", From: "v4", To: "v7.0.1"},
+	})
+	if err == nil {
+		t.Fatal("a drifted ref was rewritten")
+	}
+	mismatch, ok := ecosystem.PlanMismatch(err)
+	if !ok {
+		t.Fatalf("error is not a PlanMismatchError: %v", err)
+	}
+	if len(mismatch.Mismatches) != 1 {
+		t.Fatalf("mismatches = %+v, want one", mismatch.Mismatches)
+	}
+	if got := mismatch.Mismatches[0]; got.Name != "actions/checkout" || got.Want != "v4" || got.Got != "v7" {
+		t.Errorf("mismatch = %+v, want actions/checkout v7 where v4 was planned", got)
+	}
+	if got := readWorkflowFile(t, root, "ci.yml"); got != body {
+		t.Errorf("the workflow was written despite the refusal:\n%s", got)
+	}
+	if len(res.Observed) != 0 {
+		t.Errorf("observed = %v, want nothing reported", res.Observed)
+	}
+}
+
+// TestApplyTreatsTheTargetRefAsApplied keeps the applier idempotent: when the base
+// branch already holds the planned ref, the change is satisfied rather than
+// missing, which is what lets one plan cover two workflow files.
+func TestApplyTreatsTheTargetRefAsApplied(t *testing.T) {
+	const body = `jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v5
+`
+	root := seedWorkflows(t, map[string]string{"ci.yml": body})
+
+	res, err := actions.New().Apply(context.Background(), root, []ecosystem.Change{
+		{Name: "actions/checkout", From: "v4", To: "v5"},
+	})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if got := readWorkflowFile(t, root, "ci.yml"); got != body {
+		t.Errorf("an already-planned ref was rewritten:\n%s", got)
+	}
+	if got := res.Observed["actions/checkout"]; got != [2]string{"v4", "v5"} {
+		t.Errorf("observed = %v, want the change reported as satisfied", got)
+	}
+	if len(res.Changed) != 0 {
+		t.Errorf("changed = %v, want none (nothing moved in this call)", res.Changed)
 	}
 }

@@ -418,10 +418,16 @@ func splitVersion(v string) []string {
 
 // Apply rewrites a literal <version> in the pom that declares the dependency.
 //
-// It refuses a version that is property-indirected: the real value lives in a
+// It declines a version that is property-indirected: the real value lives in a
 // <properties> block, possibly in a parent pom, and splicing the element would
-// leave two sources of truth. It also refuses a dependency whose version is managed
-// centrally, because the module's pom does not carry the version at all.
+// leave two sources of truth. It also declines a dependency whose version is
+// managed centrally, because the module's pom does not carry the version at all.
+// Both are reported in ApplyResult.Skipped, so a run says what it could not do
+// instead of quietly committing part of the plan.
+//
+// A literal that holds a version other than the one the plan was built against is
+// a different matter: the branch is not the tree the plan describes, so the whole
+// apply fails with ecosystem.PlanMismatchError (§8).
 func (m *Ecosystem) Apply(ctx context.Context, dir string, changes []ecosystem.Change) (ecosystem.ApplyResult, error) {
 	res := ecosystem.ApplyResult{Observed: map[string][2]string{}}
 	if len(changes) == 0 {
@@ -433,38 +439,85 @@ func (m *Ecosystem) Apply(ctx context.Context, dir string, changes []ecosystem.C
 	if err != nil {
 		return res, err
 	}
+
+	type pom struct {
+		path     string
+		original string
+		updated  string
+	}
+	files := make([]pom, 0, len(targets))
+	applied, held, declined := map[string]bool{}, map[string]string{}, map[string]string{}
+
 	for _, t := range targets {
 		data, err := os.ReadFile(t.Manifest)
 		if err != nil {
 			return res, err
 		}
 		text := string(data)
-		updated, applied, err := rewritePom(text, changes, &res)
-		if err != nil {
-			return res, err
+		updated := rewritePom(text, changes, &res, applied, held, declined)
+		files = append(files, pom{path: t.Manifest, original: text, updated: updated})
+	}
+
+	// A pom that holds a different version than the plan expects means applying
+	// would produce a diff nobody reviewed: refuse the whole plan instead (§8).
+	// A shape this applier cannot edit is a decline, reported as such, not a
+	// mismatch — the plan was right, the applier is limited.
+	if mismatches := unappliedArtifacts(changes, applied, held, declined); len(mismatches) > 0 {
+		return ecosystem.ApplyResult{Observed: map[string][2]string{}},
+			&ecosystem.PlanMismatchError{Where: "pom.xml", Mismatches: mismatches}
+	}
+	for _, ch := range changes {
+		// A coordinate another pom did bump is not declined, even when this one
+		// carries only an indirection for it.
+		if reason, ok := declined[ch.Name]; ok && !applied[ch.Name] {
+			res.Skipped = append(res.Skipped, ecosystem.SkippedChange{Name: ch.Name, Reason: reason})
 		}
-		_ = applied
-		if updated != text {
-			if err := os.WriteFile(t.Manifest, []byte(updated), 0o644); err != nil {
-				return res, fmt.Errorf("write %s: %w", t.Manifest, err)
-			}
-			res.Commands = append(res.Commands, "edit "+filepath.Base(t.Manifest))
+	}
+
+	for _, f := range files {
+		if f.updated == f.original {
+			continue
 		}
+		if err := os.WriteFile(f.path, []byte(f.updated), 0o644); err != nil {
+			return res, fmt.Errorf("write %s: %w", f.path, err)
+		}
+		res.Commands = append(res.Commands, "edit "+filepath.Base(f.path))
 	}
 	sort.Strings(res.Changed)
 	return res, nil
 }
 
+// unappliedArtifacts lists the coordinates no pom accepted, in the plan's order.
+// A coordinate the applier declined is not listed: the plan is not wrong about it,
+// so it is reported through ApplyResult.Skipped instead of failing the apply.
+func unappliedArtifacts(changes []ecosystem.Change, applied map[string]bool, held, declined map[string]string) []ecosystem.VersionMismatch {
+	var out []ecosystem.VersionMismatch
+	for _, ch := range changes {
+		if applied[ch.Name] {
+			continue
+		}
+		if _, declined := declined[ch.Name]; declined {
+			continue
+		}
+		out = append(out, ecosystem.VersionMismatch{Name: ch.Name, Want: ch.From, Got: held[ch.Name]})
+	}
+	return out
+}
+
 // dependencyRE matches one <dependency>…</dependency> block.
 var dependencyRE = regexp.MustCompile(`(?s)<dependency>(.*?)</dependency>`)
 
-// rewritePom bumps literal versions for the requested coordinates.
-func rewritePom(text string, changes []ecosystem.Change, res *ecosystem.ApplyResult) (string, bool, error) {
+// rewritePom bumps literal versions for the requested coordinates, recording what
+// each one was and declining the ones this applier cannot edit safely.
+//
+// A literal is rewritten only when it still holds the version the plan was built
+// against; a different literal goes into held, and the caller refuses the plan
+// rather than rewriting a version nobody planned.
+func rewritePom(text string, changes []ecosystem.Change, res *ecosystem.ApplyResult, applied map[string]bool, held, declined map[string]string) string {
 	want := map[string]ecosystem.Change{}
 	for _, ch := range changes {
 		want[ch.Name] = ch
 	}
-	changed := false
 	out := dependencyRE.ReplaceAllStringFunc(text, func(block string) string {
 		g := groupIDRE.FindStringSubmatch(block)
 		a := artifactIDRE.FindStringSubmatch(block)
@@ -478,20 +531,39 @@ func rewritePom(text string, changes []ecosystem.Change, res *ecosystem.ApplyRes
 		}
 		v := versionRE.FindStringSubmatch(block)
 		if v == nil {
-			// Version is managed centrally; the element has nothing to edit.
+			// Version is managed centrally; the module's pom has nothing to edit.
+			if _, seen := declined[coord]; !seen {
+				declined[coord] = "the version is managed centrally, so this pom carries none to edit"
+			}
 			return block
 		}
 		current := string(v[1])
 		if strings.HasPrefix(current, "${") {
 			// Property indirection: refuse rather than create a second source of truth.
+			if _, seen := declined[coord]; !seen {
+				declined[coord] = "the version is property-indirected (" + current + "); editing this element would create a second source of truth"
+			}
 			return block
 		}
-		changed = true
+		if current == ch.To {
+			// Already where the plan wants it: another pom was rewritten, or the
+			// base branch moved. Satisfied, not missing.
+			res.Observed[coord] = [2]string{ch.From, ch.To}
+			applied[coord] = true
+			return block
+		}
+		if ch.From != "" && current != ch.From {
+			if _, seen := held[coord]; !seen {
+				held[coord] = current
+			}
+			return block
+		}
 		res.Observed[coord] = [2]string{current, ch.To}
 		res.Changed = append(res.Changed, coord)
+		applied[coord] = true
 		return versionRE.ReplaceAllString(block, "<version>"+ch.To+"</version>")
 	})
-	return out, changed, nil
+	return out
 }
 
 var (

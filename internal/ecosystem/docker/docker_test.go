@@ -164,3 +164,63 @@ func TestClassifyTagsAreNotSemver(t *testing.T) {
 		}
 	}
 }
+
+// seedDockerRepo writes one file into a temp repository and returns its root.
+func seedDockerRepo(t *testing.T, name, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		t.Fatalf("seed %s: %v", name, err)
+	}
+	return dir
+}
+
+// TestApplyRefusesATagThePlanDidNotPredict mirrors the Actions defect: an applier
+// that rewrites any tag it finds produces a diff nobody reviewed when the branch is
+// not the tree the plan was built from (DEP-D516B032).
+func TestApplyRefusesATagThePlanDidNotPredict(t *testing.T) {
+	const body = "FROM alpine:3.20 AS build\n"
+	dir := seedDockerRepo(t, "Dockerfile", body)
+
+	_, err := docker.New().Apply(context.Background(), dir, []ecosystem.Change{
+		{Name: "alpine", From: "3.14", To: "3.21"},
+	})
+	mismatch, ok := ecosystem.PlanMismatch(err)
+	if !ok {
+		t.Fatalf("error is not a PlanMismatchError: %v", err)
+	}
+	if len(mismatch.Mismatches) != 1 {
+		t.Fatalf("mismatches = %+v, want one", mismatch.Mismatches)
+	}
+	if got := mismatch.Mismatches[0]; got.Got != "3.20" || got.Want != "3.14" {
+		t.Errorf("mismatch = %+v, want the actual tag 3.20 instead of 3.14", got)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(got) != body {
+		t.Errorf("the Dockerfile was written despite the refusal:\n%s", got)
+	}
+}
+
+// TestApplyRewritesOnlyThePlannedTag: the plan names one version, so only the
+// reference that holds it may move.
+func TestApplyRewritesOnlyThePlannedTag(t *testing.T) {
+	const body = "FROM alpine:3.14 AS base\nFROM alpine:3.19 AS newer\n"
+	dir := seedDockerRepo(t, "Dockerfile", body)
+
+	if _, err := docker.New().Apply(context.Background(), dir, []ecosystem.Change{
+		{Name: "alpine", From: "3.14", To: "3.20"},
+	}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	want := "FROM alpine:3.20 AS base\nFROM alpine:3.19 AS newer\n"
+	got, err := os.ReadFile(filepath.Join(dir, "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(got) != want {
+		t.Errorf("dockerfile =\n%s want\n%s", got, want)
+	}
+}

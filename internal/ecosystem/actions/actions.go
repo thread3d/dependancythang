@@ -122,11 +122,20 @@ func (e *Ecosystem) Inventory(ctx context.Context, t ecosystem.Target) ([]ecosys
 	return deps, nil
 }
 
+// workflowsDir is where every workflow file lives, relative to a repository root.
+const workflowsDir = "/.github/workflows"
+
 // Apply rewrites refs in every workflow file.
 //
 // When a change carries a digest (a commit SHA) the reference is rewritten to the
 // SHA and the previous tag is kept as a trailing comment, which is the hardened
 // form: immutable pin, human-readable version.
+//
+// A change is applied only to lines that still hold the ref the plan was built
+// against. A workflow that holds a different ref means the branch is not the tree
+// the plan describes — the base branch moved, or someone edited the workflow —
+// and rewriting it anyway would record a change that never happened. In that case
+// no file is written and the call fails with ecosystem.PlanMismatchError (§8).
 func (e *Ecosystem) Apply(ctx context.Context, dir string, changes []ecosystem.Change) (ecosystem.ApplyResult, error) {
 	res := ecosystem.ApplyResult{Observed: map[string][2]string{}}
 	if len(changes) == 0 {
@@ -141,6 +150,18 @@ func (e *Ecosystem) Apply(ctx context.Context, dir string, changes []ecosystem.C
 	if err != nil {
 		return res, err
 	}
+
+	type workflow struct {
+		path     string
+		original string
+		lines    []string
+	}
+	files := make([]workflow, 0, len(targets))
+	applied := map[string]bool{}
+	// held records the ref a workflow actually pins for an action that was not
+	// rewritten, so the refusal can say what the branch has instead.
+	held := map[string]string{}
+
 	for _, t := range targets {
 		data, err := os.ReadFile(t.Manifest)
 		if err != nil {
@@ -161,6 +182,21 @@ func (e *Ecosystem) Apply(ctx context.Context, dir string, changes []ecosystem.C
 			if ch.Digest != "" {
 				next = ch.Digest
 			}
+			if m[4] == next {
+				// Already where the plan wants it: an earlier group applied the
+				// same action ref across this directory, or the base branch moved
+				// to exactly the planned target. Nothing to rewrite, but the
+				// change is satisfied, so it must not read as missing.
+				res.Observed[m[3]] = [2]string{ch.From, next}
+				applied[m[3]] = true
+				continue
+			}
+			if ch.From != "" && m[4] != ch.From {
+				if _, seen := held[m[3]]; !seen {
+					held[m[3]] = m[4]
+				}
+				continue
+			}
 			comment := ""
 			if c := strings.TrimSpace(m[6]); strings.HasPrefix(c, "#") {
 				comment = " " + strings.TrimSpace(c)
@@ -176,16 +212,40 @@ func (e *Ecosystem) Apply(ctx context.Context, dir string, changes []ecosystem.C
 			lines[i] = m[1] + m[2] + m[3] + "@" + next + m[5] + comment
 			res.Observed[m[3]] = [2]string{m[4], next}
 			res.Changed = append(res.Changed, m[3])
+			applied[m[3]] = true
 		}
-		updated := strings.Join(lines, "\n")
-		if updated != original {
-			if err := os.WriteFile(t.Manifest, []byte(updated), 0o644); err != nil {
-				return res, fmt.Errorf("write %s: %w", t.Manifest, err)
-			}
+		files = append(files, workflow{path: t.Manifest, original: original, lines: lines})
+	}
+
+	if mismatches := unappliedRefs(changes, applied, held); len(mismatches) > 0 {
+		return ecosystem.ApplyResult{Observed: map[string][2]string{}},
+			&ecosystem.PlanMismatchError{Where: workflowsDir, Mismatches: mismatches}
+	}
+
+	for _, f := range files {
+		updated := strings.Join(f.lines, "\n")
+		if updated == f.original {
+			continue
+		}
+		if err := os.WriteFile(f.path, []byte(updated), 0o644); err != nil {
+			return res, fmt.Errorf("write %s: %w", f.path, err)
 		}
 	}
 	sort.Strings(res.Changed)
 	return res, nil
+}
+
+// unappliedRefs lists the changes no workflow accepted, in the plan's order, with
+// the ref the branch actually pins when it pins one at all.
+func unappliedRefs(changes []ecosystem.Change, applied map[string]bool, held map[string]string) []ecosystem.VersionMismatch {
+	var out []ecosystem.VersionMismatch
+	for _, ch := range changes {
+		if applied[ch.Name] {
+			continue
+		}
+		out = append(out, ecosystem.VersionMismatch{Name: ch.Name, Want: ch.From, Got: held[ch.Name]})
+	}
+	return out
 }
 
 // Compare orders refs: semver tags numerically, everything else as strings so

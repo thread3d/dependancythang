@@ -256,7 +256,23 @@ func (s *Service) applyIntoWorktree(ctx context.Context, run *store.Run, plan pl
 	result, err := s.applyGroups(ctx, run.Worktree, plan)
 	if err != nil {
 		cleanup(err.Error())
+		// An applier that found the branch holding different versions than the
+		// plan expects is reporting a stale plan, not a toolchain failure: the
+		// caller has to re-plan, not retry.
+		if mismatch, ok := ecosystem.PlanMismatch(err); ok {
+			return coded(CodePlanStale, mismatch)
+		}
 		return fmt.Errorf("apply to %s: %w", run.Branch, err)
+	}
+
+	// The plan is a promise about the branch: every change it lists must have
+	// happened, starting from the version it named. An applier that reported
+	// success while leaving a change untouched would otherwise land a commit that
+	// describes a diff it did not make (§8: the observed delta is the truth).
+	if mismatches := unappliedChanges(plan, result); len(mismatches) > 0 {
+		mismatch := &ecosystem.PlanMismatchError{Where: run.Branch, Mismatches: mismatches}
+		cleanup(mismatch.Error())
+		return coded(CodePlanStale, mismatch)
 	}
 
 	wt := gitx.New(run.Worktree)
@@ -276,6 +292,9 @@ func (s *Service) applyIntoWorktree(ctx context.Context, run *store.Run, plan pl
 	run.Detail = fmt.Sprintf("%d change(s) applied", len(result.Changed))
 	if result.Unsplittable {
 		run.Detail += "; resolved graph moved beyond the requested changes"
+	}
+	if len(result.Skipped) > 0 {
+		run.Detail += fmt.Sprintf("; %d declined (%s)", len(result.Skipped), skipSummary(result.Skipped))
 	}
 	if err := s.Store.SaveRun(ctx, *run); err != nil {
 		return err
@@ -337,6 +356,7 @@ func (s *Service) applyGroups(ctx context.Context, dir string, plan planner.Plan
 			merged.Observed[k] = v
 		}
 		merged.Changed = append(merged.Changed, res.Changed...)
+		merged.Skipped = append(merged.Skipped, res.Skipped...)
 		merged.Commands = append(merged.Commands, res.Commands...)
 		if res.Unsplittable {
 			merged.Unsplittable = true
@@ -344,6 +364,55 @@ func (s *Service) applyGroups(ctx context.Context, dir string, plan planner.Plan
 	}
 	sort.Strings(merged.Changed)
 	return merged, nil
+}
+
+// unappliedChanges compares what the plan promised against what the appliers
+// reported. A change the applier never mentioned, or mentioned moving from a
+// version other than the one the plan named, means the branch is not the tree the
+// plan was built from; committing anyway would describe a diff that does not
+// exist and record a version that was never there.
+//
+// Appliers that report an empty from-version (a dependency the toolchain added)
+// are not second-guessed: there was nothing for the plan to have been wrong
+// about.
+func unappliedChanges(p planner.Plan, res ecosystem.ApplyResult) []ecosystem.VersionMismatch {
+	var out []ecosystem.VersionMismatch
+	seen := map[string]bool{}
+	for _, g := range p.Groups {
+		for _, c := range g.Changes {
+			// The applier's report is keyed by dependency, so a plan that touches
+			// one dependency in two targets is checked once.
+			if seen[c.Dependency] {
+				continue
+			}
+			seen[c.Dependency] = true
+			if declined(c.Dependency, res.Skipped) {
+				// The applier said, with a reason, that it will not make this
+				// change: the plan is not wrong, the applier is limited.
+				continue
+			}
+			observed, ok := res.Observed[c.Dependency]
+			switch {
+			case !ok:
+				out = append(out, ecosystem.VersionMismatch{Name: c.Dependency, Want: c.From})
+			case c.From != "" && observed[0] != "" && observed[0] != c.From:
+				out = append(out, ecosystem.VersionMismatch{
+					Name: c.Dependency, Want: c.From, Got: observed[0],
+				})
+			}
+		}
+	}
+	return out
+}
+
+// declined reports whether an applier explicitly declined a change.
+func declined(name string, skipped []ecosystem.SkippedChange) bool {
+	for _, s := range skipped {
+		if s.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // changesOfGroup renders one group as applier input.
@@ -389,11 +458,28 @@ func commitMessage(p planner.Plan, res ecosystem.ApplyResult) string {
 			}
 		}
 	}
+	if len(res.Skipped) > 0 {
+		// Say what did not land: a commit that lists a change it declined would be
+		// the same misreporting the apply boundary refuses for drift (§8).
+		b.WriteString("\n\nNot applied:\n")
+		for _, s := range res.Skipped {
+			fmt.Fprintf(&b, "\n- %s: %s", s.Name, s.Reason)
+		}
+	}
 	if res.Unsplittable {
 		b.WriteString("\n\nThe resolved dependency graph moved beyond the requested changes.")
 	}
 	b.WriteString("\n\nCo-authored-by: depmcp <depmcp@localhost>\n")
 	return b.String()
+}
+
+// skipSummary renders declined changes for a one-line run detail.
+func skipSummary(skipped []ecosystem.SkippedChange) string {
+	parts := make([]string, 0, len(skipped))
+	for _, s := range skipped {
+		parts = append(parts, s.Name)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // RevertRun deletes a run's branch and worktree (§12). A merged or closed run is

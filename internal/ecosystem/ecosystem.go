@@ -5,6 +5,8 @@ package ecosystem
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -68,11 +70,22 @@ type ApplyResult struct {
 	Observed map[string][2]string `json:"observed,omitempty"`
 	// Changed lists dependencies whose version moved.
 	Changed []string `json:"changed,omitempty"`
+	// Skipped lists changes the applier deliberately declined, with the reason.
+	// A decline is not a mismatch: the ecosystem cannot express the edit (a
+	// property-indirected Maven version, say) and saying so is more useful than
+	// failing the plan. The run reports them instead of pretending they landed.
+	Skipped []SkippedChange `json:"skipped,omitempty"`
 	// Unsplittable is set when the diff is broader than requested, which happens
 	// whenever the package manager resolves transitively.
 	Unsplittable bool `json:"unsplittable,omitempty"`
 	// Commands records what was executed, for the audit log.
 	Commands []string `json:"commands,omitempty"`
+}
+
+// SkippedChange is one planned change an applier declined, and why.
+type SkippedChange struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
 }
 
 // UpdateClass is the semver distance between two versions.
@@ -109,6 +122,12 @@ type Ecosystem interface {
 	// Apply rewrites manifests and lockfiles inside dir. It delegates to the
 	// ecosystem's own tool wherever one exists; hand-editing lockfiles is the
 	// main source of subtle breakage (§6).
+	//
+	// The result has to account for every change: in Observed when it landed, in
+	// Skipped when this ecosystem declines it and can say why. A change that is
+	// neither is treated as a plan built from a different tree, because a commit
+	// listing a change that never happened is the failure mode this contract
+	// exists to prevent (§8).
 	Apply(ctx context.Context, dir string, changes []Change) (ApplyResult, error)
 }
 
@@ -147,4 +166,53 @@ func Dedupe(vs []Version) []Version {
 		out = append(out, v)
 	}
 	return out
+}
+
+// VersionMismatch is one planned change an applier could not make because the
+// manifest does not hold the version the plan expects.
+type VersionMismatch struct {
+	Name string `json:"name"`
+	// Want is the version the plan was built against.
+	Want string `json:"want"`
+	// Got is what the manifest actually holds, or empty when the dependency is
+	// not there at all.
+	Got string `json:"got,omitempty"`
+}
+
+// PlanMismatchError reports that the tree an applier was handed is not the tree
+// the plan was built from: the base branch moved, or someone edited the file
+// between plan and apply. §8 makes this a refusal, not a repair — rewriting the
+// versions that happen to be there would produce a diff nobody reviewed and a
+// record of a change that never happened.
+type PlanMismatchError struct {
+	// Where names the manifest, or the directory, that was looked in.
+	Where      string            `json:"where,omitempty"`
+	Mismatches []VersionMismatch `json:"mismatches"`
+}
+
+func (e *PlanMismatchError) Error() string {
+	parts := make([]string, 0, len(e.Mismatches))
+	for _, m := range e.Mismatches {
+		if m.Got == "" {
+			parts = append(parts, fmt.Sprintf("%s is not here, the plan expects %s", m.Name, m.Want))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s is %s, the plan expects %s", m.Name, m.Got, m.Want))
+	}
+	msg := "the tree is not the one the plan was built from: " + strings.Join(parts, "; ")
+	if e.Where != "" {
+		msg += " (" + e.Where + ")"
+	}
+	return msg + "; re-plan before applying"
+}
+
+// PlanMismatch returns the PlanMismatchError in err's chain, if there is one. The
+// write path turns it into PLAN_STALE rather than a generic failure, because the
+// plan is what has gone stale, not the toolchain.
+func PlanMismatch(err error) (*PlanMismatchError, bool) {
+	var pm *PlanMismatchError
+	if errors.As(err, &pm) {
+		return pm, true
+	}
+	return nil, false
 }

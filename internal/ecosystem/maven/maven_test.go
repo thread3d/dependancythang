@@ -238,6 +238,41 @@ func TestApplyRewritesOnlyLiteralVersions(t *testing.T) {
 	if len(res.Changed) != 1 || res.Changed[0] != "org.xerial:sqlite-jdbc" {
 		t.Errorf("changed = %v, want only sqlite-jdbc", res.Changed)
 	}
+	// The two shapes this applier cannot edit are reported, not silently dropped:
+	// a run that declined a change has to say so (DEP-D516B032).
+	reasons := map[string]string{}
+	for _, s := range res.Skipped {
+		reasons[s.Name] = s.Reason
+	}
+	for _, coord := range []string{"com.fasterxml.jackson.core:jackson-databind", "org.junit.jupiter:junit-jupiter"} {
+		if reasons[coord] == "" {
+			t.Errorf("%s was neither applied nor reported as declined: %+v", coord, res.Skipped)
+		}
+	}
+}
+
+// TestApplyRefusesALiteralThePlanDidNotPredict: a pom holding a different version
+// than the plan expects means the branch is not the tree the plan describes, so
+// nothing is written and the caller has to re-plan.
+func TestApplyRefusesALiteralThePlanDidNotPredict(t *testing.T) {
+	dir := seed(t, map[string]string{"pom.xml": pomWithDeps})
+	_, err := maven.New().Apply(context.Background(), dir, []ecosystem.Change{
+		{Name: "org.xerial:sqlite-jdbc", From: "3.40.0.0", To: "3.44.0.0"},
+	})
+	mismatch, ok := ecosystem.PlanMismatch(err)
+	if !ok {
+		t.Fatalf("error is not a PlanMismatchError: %v", err)
+	}
+	if got := mismatch.Mismatches[0]; got.Want != "3.40.0.0" || got.Got != "3.43.0.0" {
+		t.Errorf("mismatch = %+v, want the pom's 3.43.0.0 instead of 3.40.0.0", got)
+	}
+	got, readErr := os.ReadFile(filepath.Join(dir, "pom.xml"))
+	if readErr != nil {
+		t.Fatalf("read back: %v", readErr)
+	}
+	if string(got) != pomWithDeps {
+		t.Errorf("the pom was written despite the refusal:\n%s", got)
+	}
 }
 
 func TestVerifyCommandsUseMaven(t *testing.T) {

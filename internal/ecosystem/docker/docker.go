@@ -217,6 +217,13 @@ func composeImages(text string) []ref {
 //
 // Only the matched lines are touched, and everything else on the line — the
 // "AS build" alias, --platform flags, comments — is preserved byte for byte.
+// Apply rewrites image references in every Dockerfile and Compose file.
+//
+// A change is applied only to a reference that still holds the tag the plan was
+// built against, or that already holds the planned one. A manifest with any other
+// tag means the branch is not the tree the plan describes, and rewriting it anyway
+// would record a change that never happened: in that case no file is written and
+// the call fails with ecosystem.PlanMismatchError (§8).
 func (e *Ecosystem) Apply(ctx context.Context, dir string, changes []ecosystem.Change) (ecosystem.ApplyResult, error) {
 	res := ecosystem.ApplyResult{Observed: map[string][2]string{}}
 	if len(changes) == 0 {
@@ -231,32 +238,77 @@ func (e *Ecosystem) Apply(ctx context.Context, dir string, changes []ecosystem.C
 	if err != nil {
 		return res, err
 	}
+
+	type manifest struct {
+		path     string
+		original string
+		updated  string
+	}
+	files := make([]manifest, 0, len(targets))
+	// applied tracks the changes some manifest accepted; held remembers what a
+	// manifest pins for the ones it did not, so the refusal can say so.
+	applied, held := map[string]bool{}, map[string]string{}
+
 	for _, t := range targets {
 		data, err := os.ReadFile(t.Manifest)
 		if err != nil {
 			return res, err
 		}
 		original := string(data)
-		updated := original
-
+		var updated string
 		if isCompose(t.Manifest) {
-			updated = rewriteCompose(original, want, &res)
+			updated = rewriteCompose(original, want, &res, applied, held)
 		} else {
-			updated = rewriteDockerfile(original, want, &res)
+			updated = rewriteDockerfile(original, want, &res, applied, held)
 		}
+		files = append(files, manifest{path: t.Manifest, original: original, updated: updated})
+	}
 
-		if updated != original {
-			if err := os.WriteFile(t.Manifest, []byte(updated), 0o644); err != nil {
-				return res, fmt.Errorf("write %s: %w", t.Manifest, err)
-			}
+	if mismatches := unappliedImages(changes, applied, held); len(mismatches) > 0 {
+		return ecosystem.ApplyResult{Observed: map[string][2]string{}},
+			&ecosystem.PlanMismatchError{Where: "image references", Mismatches: mismatches}
+	}
+
+	for _, f := range files {
+		if f.updated == f.original {
+			continue
+		}
+		if err := os.WriteFile(f.path, []byte(f.updated), 0o644); err != nil {
+			return res, fmt.Errorf("write %s: %w", f.path, err)
 		}
 	}
 	sort.Strings(res.Changed)
 	return res, nil
 }
 
+// unappliedImages lists the changes no manifest accepted, in the plan's order,
+// with the tag the branch actually pins when it pins one at all.
+func unappliedImages(changes []ecosystem.Change, applied map[string]bool, held map[string]string) []ecosystem.VersionMismatch {
+	var out []ecosystem.VersionMismatch
+	for _, ch := range changes {
+		if applied[ch.Name] {
+			continue
+		}
+		out = append(out, ecosystem.VersionMismatch{Name: ch.Name, Want: ch.From, Got: held[ch.Name]})
+	}
+	return out
+}
+
+// alreadyAtTarget reports whether a reference is already exactly what the plan
+// asks for, which happens when another manifest in the repository was rewritten
+// from the same plan or the base branch moved to the planned tag. It records the
+// change as satisfied so it is not mistaken for a missing one.
+func alreadyAtTarget(ch ecosystem.Change, tag, digest, name string, res *ecosystem.ApplyResult, applied map[string]bool) bool {
+	if tag != ch.To || (ch.Digest != "" && digest != ch.Digest) {
+		return false
+	}
+	res.Observed[name] = [2]string{ch.From, ch.To}
+	applied[name] = true
+	return true
+}
+
 // rewriteDockerfile swaps tags and digests on FROM lines.
-func rewriteDockerfile(text string, want map[string]ecosystem.Change, res *ecosystem.ApplyResult) string {
+func rewriteDockerfile(text string, want map[string]ecosystem.Change, res *ecosystem.ApplyResult, applied map[string]bool, held map[string]string) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		m := fromRE.FindStringSubmatch(line)
@@ -268,6 +320,15 @@ func rewriteDockerfile(text string, want map[string]ecosystem.Change, res *ecosy
 		if !ok {
 			continue
 		}
+		if alreadyAtTarget(ch, old.Tag, old.Digest, old.Image, res, applied) {
+			continue
+		}
+		if ch.From != "" && old.Tag != ch.From {
+			if _, seen := held[old.Image]; !seen {
+				held[old.Image] = old.Tag
+			}
+			continue
+		}
 		next := old
 		next.Tag = ch.To
 		if ch.Digest != "" {
@@ -276,12 +337,13 @@ func rewriteDockerfile(text string, want map[string]ecosystem.Change, res *ecosy
 		lines[i] = m[1] + next.String() + m[3] + m[4]
 		res.Observed[old.Image] = [2]string{old.Tag, next.Tag}
 		res.Changed = append(res.Changed, old.Image)
+		applied[old.Image] = true
 	}
 	return strings.Join(lines, "\n")
 }
 
 // rewriteCompose swaps tags under services.*.image.
-func rewriteCompose(text string, want map[string]ecosystem.Change, res *ecosystem.ApplyResult) string {
+func rewriteCompose(text string, want map[string]ecosystem.Change, res *ecosystem.ApplyResult, applied map[string]bool, held map[string]string) string {
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		m := composeImageRE.FindStringSubmatch(line)
@@ -293,6 +355,15 @@ func rewriteCompose(text string, want map[string]ecosystem.Change, res *ecosyste
 		if !ok {
 			continue
 		}
+		if alreadyAtTarget(ch, old.Tag, old.Digest, old.Image, res, applied) {
+			continue
+		}
+		if ch.From != "" && old.Tag != ch.From {
+			if _, seen := held[old.Image]; !seen {
+				held[old.Image] = old.Tag
+			}
+			continue
+		}
 		next := old
 		next.Tag = ch.To
 		if ch.Digest != "" {
@@ -302,6 +373,7 @@ func rewriteCompose(text string, want map[string]ecosystem.Change, res *ecosyste
 		lines[i] = m[1] + m[2] + next.String() + m[4] + m[5]
 		res.Observed[old.Image] = [2]string{old.Tag, next.Tag}
 		res.Changed = append(res.Changed, old.Image)
+		applied[old.Image] = true
 	}
 	return strings.Join(lines, "\n")
 }
