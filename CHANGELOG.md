@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions track the
 milestones in [the specification](specs/Local%20Dependency%20Updater%20MCP%20Server%20(Go)%20%E2%80%94%20Specification.md).
 
+## [Unreleased]
+
+Two defects a run on rMath exposed, both of which made depmcp refuse its own
+output.
+
+### Fixed
+- **A plan depmcp built was rejected with `PLAN_STALE`.** `apply_plan` failed on a
+  plan `plan_updates` had just stored, because the plan's self-check found a
+  "duplicate change". There were two causes. A target can own several manifests —
+  the workflows directory holds one file per workflow — and the scan reported the
+  same action once per file, so `actions/checkout` appeared twice in one group;
+  `scan_dependencies` now reports one dependency per (target, name) and a second
+  manifest no longer clears the first one's stored snapshot. Separately, the
+  duplicate check compared dependencies without the file they edit, so a plan for
+  two `go.mod` files that both need one module bump was rejected as well; a change
+  is now identified by `(target, dependency, version)`, and the same change listed
+  twice for one target is still refused because the applier would collapse it.
+
+  On rMath the plan for `.github/workflows` went from 4 changes to 3 and applies,
+  writing both `ci.yml` and `lean.yml`.
+
+- **`plan_updates` panicked when there was nothing to update.** The stored plan's
+  target row came from `plan.Groups[0]`, so a repository whose dependencies are
+  all current — or one with no manifests at all — crashed with
+  `index out of range`. Via MCP that surfaced as `INTERNAL_ERROR`; via the CLI it
+  was a panic. An empty plan is now stored with an empty target row and
+  `apply_plan` reports `NOTHING_TO_APPLY`.
+
 ## [0.9.1] — 2026-11-07
 
 Two bugs the first live run of the v2 ecosystems exposed.
