@@ -22,6 +22,12 @@ import (
 // ServerName is reported in the initialize handshake.
 const ServerName = "depmcp"
 
+// ToolCount is how many tools New registers. The start-up announcement reports
+// it, so it is what a user reads when deciding whether the server offers what
+// they came for; TestToolCountMatchesRegistration fails if a tool is added or
+// removed without this number moving with it.
+const ToolCount = 22
+
 // New builds the MCP server with every M0 tool registered.
 func New(svc *app.Service) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{

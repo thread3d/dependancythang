@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -77,6 +78,35 @@ func TestToolSurface(t *testing.T) {
 			t.Errorf("tool %q is not registered", want)
 		}
 	}
+}
+
+// TestToolCountMatchesRegistration keeps the number in the start-up
+// announcement honest: ToolCount is printed to whoever starts the server, so a
+// tool added or removed without moving it would make that line lie.
+func TestToolCountMatchesRegistration(t *testing.T) {
+	ctx := context.Background()
+	_, _ = setup(t)
+	svc, err := app.Open(ctx)
+	if err != nil {
+		t.Fatalf("open service: %v", err)
+	}
+	defer svc.Close()
+
+	cs := connect(t, ctx, svc)
+	res, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if len(res.Tools) == mcpserver.ToolCount {
+		return
+	}
+	names := make([]string, 0, len(res.Tools))
+	for _, tool := range res.Tools {
+		names = append(names, tool.Name)
+	}
+	slices.Sort(names)
+	t.Fatalf("ToolCount says %d but the server registers %d tools: %s",
+		mcpserver.ToolCount, len(res.Tools), strings.Join(names, " "))
 }
 
 // TestPromptsAreRegistered checks the four prompts from §7 are served, since a

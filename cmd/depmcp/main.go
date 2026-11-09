@@ -30,6 +30,27 @@ import (
 	"github.com/thread3d/dependancythang/internal/version"
 )
 
+// logTag prefixes the lines depmcp writes to the terminal rather than to the
+// protocol. It names the project, not the binary, so the announcement reads the
+// same way as the "[dsh-file-upload] …" and "[jcalculator] …" lines the other
+// MCP servers registered with dsh print into the same stderr stream.
+const logTag = "[dependancythang]"
+
+// startupLine is the one thing depmcp says about itself when it starts serving.
+// It states what the session can do — the version, how many tools are on offer,
+// and whether anything can be written — because a reader scanning that stream is
+// deciding whether this server is worth calling, not debugging it. It stays one
+// line for the same reason: it sits next to announcements from unrelated
+// programs.
+func startupLine(stateDir string, readOnly bool) string {
+	access := "writes enabled"
+	if readOnly {
+		access = "read-only"
+	}
+	return fmt.Sprintf("%s MCP server ready — depmcp %s, %d tools, %s (state %s)",
+		logTag, version.Version, mcpserver.ToolCount, access, stateDir)
+}
+
 const usage = `depmcp — local dependency updater over MCP
 
 Usage:
@@ -165,9 +186,13 @@ func runServe(ctx context.Context, args []string) error {
 	}
 	defer svc.Close()
 
-	// stdout carries protocol frames only; every diagnostic goes to stderr.
-	fmt.Fprintf(os.Stderr, "depmcp %s serving MCP on stdio (state %s)\n",
-		version.String(), svc.StateDir())
+	// stdout carries protocol frames only; every diagnostic goes to stderr. The
+	// bracketed tag is what identifies the speaker there: the MCP client inherits
+	// this process's stderr, so this line lands in the same stream as the
+	// harness's own output and the other MCP servers' start-up banners
+	// ([dsh-file-upload], [jcalculator]), and a reader scanning that stream for
+	// "[name]" announcements would not otherwise find this one.
+	fmt.Fprintln(os.Stderr, startupLine(svc.StateDir(), svc.ReadOnly()))
 
 	server := mcpserver.New(svc)
 	if err := server.Run(ctx, &mcp.StdioTransport{}); err != nil {

@@ -10,6 +10,22 @@ Defects a run on rMath exposed, and the ones found while fixing them: three made
 depmcp give a wrong answer about a plan, and one let it apply a plan to a tree the
 plan was not built from.
 
+### Changed
+- **`depmcp serve` announces itself the way the other MCP servers do.** The
+  start-up line went to stderr as a bare `depmcp 0.12.0 (…) serving MCP on stdio
+  (state …)`: untagged, so it was hard to pick out of the stream dsh interleaves
+  with its own output, and it said nothing about the session it had just opened.
+  It now reads
+
+      [dependancythang] MCP server ready — depmcp 0.12.0, 22 tools, writes enabled (state /home/…/.local/share/depmcp)
+
+  — the same `[name] … ready — <app> <version>, <n> tools, <state>` shape as the
+  `[dsh-file-upload]` and `[jcalculator]` lines. A `server.read_only: true`
+  configuration says `read-only` in place of `writes enabled`, so the line states
+  what the session can actually do. The tool count is a constant
+  (`mcpserver.ToolCount`) with a test that fails when a tool is added or removed
+  without it, and stdout still carries protocol frames only.
+
 ### Fixed
 - **A plan depmcp built was rejected with `PLAN_STALE`.** `apply_plan` failed on a
   plan `plan_updates` had just stored, because the plan's self-check found a
